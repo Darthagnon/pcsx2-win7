@@ -7,11 +7,8 @@
     <x>0</x>
     <y>0</y>
     <width>618</width>
-    <height>439</height>
+    <height>408</height>
    </rect>
-  </property>
-  <property name="windowTitle">
-   <string>Form</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout_2">
    <property name="leftMargin">
@@ -90,7 +87,7 @@
         <item>
          <widget class="QPushButton" name="openSearchDirectory">
           <property name="text">
-           <string>Open in Explorer...</string>
+           <string>Open BIOS Folder...</string>
           </property>
          </widget>
         </item>
@@ -134,40 +131,24 @@
      <property name="title">
       <string>Options and Patches</string>
      </property>
-     <layout class="QGridLayout" name="gridLayout_3">
-      <item row="1" column="0">
-       <widget class="QCheckBox" name="patchRegion">
-        <property name="text">
-         <string>Patch Region</string>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="0">
-       <widget class="QCheckBox" name="fastBoot">
-        <property name="text">
-         <string>Fast Boot</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QComboBox" name="regionComboBox">
-        <property name="enabled">
-         <bool>false</bool>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="2">
-       <spacer name="horizontalSpacer_2">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>40</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
+     <layout class="QVBoxLayout" name="verticalLayout">
+      <item>
+       <layout class="QHBoxLayout" name="horizontalLayout_3">
+        <item>
+         <widget class="QCheckBox" name="fastBoot">
+          <property name="text">
+           <string>Fast Boot</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QCheckBox" name="fastBootFastForward">
+          <property name="text">
+           <string>Fast Forward Boot</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
       </item>
      </layout>
     </widget>

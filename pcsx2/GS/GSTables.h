@@ -1,19 +1,9 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
+
+#include "common/Assertions.h"
 
 /// Table for storing swizzling of blocks within a page
 struct alignas(64) GSBlockSwizzleTable
@@ -54,7 +44,7 @@ struct alignas(128) GSPixelRowOffsetTable
 
 	int operator[](size_t x) const
 	{
-		ASSERT(x < 4096);
+		pxAssert(x < 4096);
 		return value[x];
 	}
 };
@@ -102,11 +92,8 @@ makeSwizzleTableList(
 }
 
 extern const GSSizedBlockSwizzleTable<4, 8> blockTable32;
-extern const GSSizedBlockSwizzleTable<4, 8> blockTable32Z;
 extern const GSSizedBlockSwizzleTable<8, 4> blockTable16;
 extern const GSSizedBlockSwizzleTable<8, 4> blockTable16S;
-extern const GSSizedBlockSwizzleTable<8, 4> blockTable16Z;
-extern const GSSizedBlockSwizzleTable<8, 4> blockTable16SZ;
 extern const GSSizedBlockSwizzleTable<4, 8> blockTable8;
 extern const GSSizedBlockSwizzleTable<8, 4> blockTable4;
 extern const u8 columnTable32[8][8];
@@ -118,11 +105,8 @@ extern const u8 clutTableT32I4[16];
 extern const u8 clutTableT16I8[32];
 extern const u8 clutTableT16I4[16];
 extern const GSPixelColOffsetTable< 32> pixelColOffset32;
-extern const GSPixelColOffsetTable< 32> pixelColOffset32Z;
 extern const GSPixelColOffsetTable< 64> pixelColOffset16;
 extern const GSPixelColOffsetTable< 64> pixelColOffset16S;
-extern const GSPixelColOffsetTable< 64> pixelColOffset16Z;
-extern const GSPixelColOffsetTable< 64> pixelColOffset16SZ;
 extern const GSPixelColOffsetTable< 64> pixelColOffset8;
 extern const GSPixelColOffsetTable<128> pixelColOffset4;
 
@@ -145,29 +129,20 @@ constexpr GSPixelRowOffsetTableList<PageWidth, 7> makeRowOffsetTableList(
 struct GSTables
 {
 	static const GSSizedPixelRowOffsetTable< 64> _pixelRowOffset32;
-	static const GSSizedPixelRowOffsetTable< 64> _pixelRowOffset32Z;
 	static const GSSizedPixelRowOffsetTable< 64> _pixelRowOffset16;
 	static const GSSizedPixelRowOffsetTable< 64> _pixelRowOffset16S;
-	static const GSSizedPixelRowOffsetTable< 64> _pixelRowOffset16Z;
-	static const GSSizedPixelRowOffsetTable< 64> _pixelRowOffset16SZ;
 	static const GSSizedPixelRowOffsetTable<128> _pixelRowOffset8[2];
 	static const GSSizedPixelRowOffsetTable<128> _pixelRowOffset4[2];
 
 	static constexpr auto pixelRowOffset32   = makeRowOffsetTableList(&_pixelRowOffset32);
-	static constexpr auto pixelRowOffset32Z  = makeRowOffsetTableList(&_pixelRowOffset32Z);
 	static constexpr auto pixelRowOffset16   = makeRowOffsetTableList(&_pixelRowOffset16);
 	static constexpr auto pixelRowOffset16S  = makeRowOffsetTableList(&_pixelRowOffset16S);
-	static constexpr auto pixelRowOffset16Z  = makeRowOffsetTableList(&_pixelRowOffset16Z);
-	static constexpr auto pixelRowOffset16SZ = makeRowOffsetTableList(&_pixelRowOffset16SZ);
 	static constexpr auto pixelRowOffset8 = makeRowOffsetTableList(&_pixelRowOffset8[0], &_pixelRowOffset8[1]);
 	static constexpr auto pixelRowOffset4 = makeRowOffsetTableList(&_pixelRowOffset4[0], &_pixelRowOffset4[1]);
 };
 
 constexpr auto swizzleTables32   = makeSwizzleTableList(blockTable32,   pixelColOffset32,   GSTables::pixelRowOffset32  );
-constexpr auto swizzleTables32Z  = makeSwizzleTableList(blockTable32Z,  pixelColOffset32Z,  GSTables::pixelRowOffset32Z );
 constexpr auto swizzleTables16   = makeSwizzleTableList(blockTable16,   pixelColOffset16,   GSTables::pixelRowOffset16  );
-constexpr auto swizzleTables16Z  = makeSwizzleTableList(blockTable16Z,  pixelColOffset16Z,  GSTables::pixelRowOffset16Z );
 constexpr auto swizzleTables16S  = makeSwizzleTableList(blockTable16S,  pixelColOffset16S,  GSTables::pixelRowOffset16S );
-constexpr auto swizzleTables16SZ = makeSwizzleTableList(blockTable16SZ, pixelColOffset16SZ, GSTables::pixelRowOffset16SZ);
 constexpr auto swizzleTables8    = makeSwizzleTableList(blockTable8,    pixelColOffset8,    GSTables::pixelRowOffset8   );
 constexpr auto swizzleTables4    = makeSwizzleTableList(blockTable4,    pixelColOffset4,    GSTables::pixelRowOffset4   );

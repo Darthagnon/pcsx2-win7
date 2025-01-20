@@ -1,22 +1,13 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
-#include "GSVector.h"
+#include "GS/GSVector.h"
 #include "pcsx2/Config.h"
+#include "common/BitUtils.h"
+
+#include <utility>
 
 /// Like `memcmp(&a, &b, sizeof(T)) == 0` but faster
 template <typename T>
@@ -70,17 +61,11 @@ __forceinline bool BitEqual(const T& a, const T& b)
 	}
 	if (i != sizeof(T))
 	{
-		ASSERT(i + 1 == sizeof(T));
+		pxAssert(i + 1 == sizeof(T));
 		eqb = ac[i] == bc[i] && eqb;
 	}
 	return eqb;
 }
-
-#ifdef ENABLE_ACCURATE_BUFFER_EMULATION
-static const GSVector2i default_rt_size(2048, 2048);
-#else
-static const GSVector2i default_rt_size(0, 0);
-#endif
 
 extern Pcsx2Config::GSOptions GSConfig;
 
@@ -120,23 +105,24 @@ static constexpr int MAXIMUM_TEXTURE_MIPMAP_LEVELS = 7;
 // The maximum number of duplicate frames we can skip presenting for.
 static constexpr u32 MAX_SKIPPED_DUPLICATE_FRAMES = 3;
 
-// Helper path to dump texture
-extern const std::string root_sw;
-extern const std::string root_hw;
+extern void* GSAllocateWrappedMemory(size_t size, size_t repeat);
+extern void GSFreeWrappedMemory(void* ptr, size_t size, size_t repeat);
 
-extern void* vmalloc(size_t size, bool code);
-extern void vmfree(void* ptr, size_t size);
+/// We want all allocations and pitches to be aligned to 32-bit, regardless of whether we're
+/// SSE4 or AVX2, because of multi-ISA.
+static constexpr u32 VECTOR_ALIGNMENT = 32;
 
-extern void* fifo_alloc(size_t size, size_t repeat);
-extern void fifo_free(void* ptr, size_t size, size_t repeat);
+/// Aligns allocation/pitch size to preferred host size.
+template<typename T>
+__fi static T VectorAlign(T value)
+{
+	return Common::AlignUpPow2(value, VECTOR_ALIGNMENT);
+}
+
+/// Returns the maximum alpha value across a range of data. Assumes stride is 16 byte aligned.
+std::pair<u8, u8> GSGetRGBA8AlphaMinMax(const void* data, u32 width, u32 height, u32 stride);
 
 // clang-format off
-
-#ifdef __POSIX__
-	#include <zlib.h>
-#else
-	#include <zlib/zlib.h>
-#endif
 
 #ifdef _MSC_VER
 	#define ALIGN_STACK(n) alignas(n) int dummy__; (void)dummy__;
@@ -149,18 +135,4 @@ extern void fifo_free(void* ptr, size_t size, size_t repeat);
 		// TODO Check clang behavior
 		#define ALIGN_STACK(n) alignas(n) int dummy__;
 	#endif
-#endif
-
-#ifdef ENABLE_VTUNE
-	#include "jitprofiling.h"
-	#ifdef _WIN32
-		#pragma comment(lib, "jitprofiling.lib")
-	#endif
-#endif
-
-#ifdef _WIN32
-	#define DIRECTORY_SEPARATOR '\\'
-#else
-	#include <sys/stat.h> // mkdir
-	#define DIRECTORY_SEPARATOR '/'
 #endif

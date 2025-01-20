@@ -100,15 +100,9 @@ Comments) 1950 to 1952 in the files http://tools.ietf.org/html/rfc1950
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef __POSIX__
 #include <zlib.h>
-#else
-#include <zlib/zlib.h>
-#endif
 
 #include "common/FileSystem.h"
-
-#define local static
 
 //#define SPAN (1048576L)  /* desired distance between access points */
 #define WINSIZE 32768U    /* sliding window size */
@@ -155,7 +149,7 @@ typedef struct access Access;
 #endif
 
 /* Deallocate an index built by build_index() */
-local void free_index(struct access* index)
+static inline void free_index(struct access* index)
 {
 	if (index != NULL)
 	{
@@ -166,7 +160,7 @@ local void free_index(struct access* index)
 
 /* Add an entry to the access point list.  If out of memory, deallocate the
    existing list and return NULL. */
-local struct access* addpoint(struct access* index, int bits,
+static inline struct access* addpoint(struct access* index, int bits,
 							  s64 in, s64 out, unsigned left, unsigned char* window)
 {
 	struct point* next;
@@ -223,7 +217,7 @@ local struct access* addpoint(struct access* index, int bits,
    returns the number of access points on success (>= 1), Z_MEM_ERROR for out
    of memory, Z_DATA_ERROR for an error in the input file, or Z_ERRNO for a
    file read error.  On success, *built points to the resulting index. */
-local int build_index(FILE* in, s64 span, struct access** built)
+static inline int build_index(FILE* in, s64 span, struct access** built)
 {
 	int ret;
 	s64 totin, totout, totPrinted; /* our own total counters to avoid 4GB limit */
@@ -361,7 +355,7 @@ static inline s64 getInOffset(zstate* state)
    should not return a data error unless the file was modified since the index
    was generated.  extract() may also return Z_ERRNO if there is an error on
    reading or seeking the input file. */
-local int extract(FILE* in, struct access* index, s64 offset,
+static inline int extract(FILE* in, struct access* index, s64 offset,
 				  unsigned char* buf, int len, zstate* state)
 {
 	int ret, skip;

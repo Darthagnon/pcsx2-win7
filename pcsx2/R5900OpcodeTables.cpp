@@ -1,26 +1,12 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 //all tables for R5900 are define here..
-
-#include "PrecompiledHeader.h"
 
 #include "R5900OpcodeTables.h"
 #include "R5900.h"
 
+// TODO(Stenzek): Move headers to common code.
 #include "x86/iR5900AritImm.h"
 #include "x86/iR5900Arit.h"
 #include "x86/iR5900MultDiv.h"
@@ -39,6 +25,7 @@ namespace R5900
 	{
 		// Generates an entry for the given opcode name.
 		// Assumes the default function naming schemes for interpreter and recompiler  functions.
+#ifdef _M_X86 // TODO(Stenzek): Remove me once EE/VU/IOP recs are added.
 	#	define MakeOpcode( name, cycles, flags ) \
 		static const OPCODE name = { \
 			#name, \
@@ -82,6 +69,51 @@ namespace R5900
 			::R5900::Dynarec::OpcodeImpl::COP1::rec##name, \
 			::R5900::OpcodeDisasm::name \
 		}
+#else
+	#	define MakeOpcode( name, cycles, flags ) \
+		static const OPCODE name = { \
+			#name, \
+			cycles, \
+			flags, \
+			NULL, \
+			::R5900::Interpreter::OpcodeImpl::name, \
+			nullptr, \
+			::R5900::OpcodeDisasm::name \
+		}
+
+#	define MakeOpcodeM( name, cycles, flags ) \
+		static const OPCODE name = { \
+			#name, \
+			cycles, \
+			flags, \
+			NULL, \
+			::R5900::Interpreter::OpcodeImpl::MMI::name, \
+			nullptr, \
+			::R5900::OpcodeDisasm::name \
+		}
+
+#	define MakeOpcode0( name, cycles, flags ) \
+		static const OPCODE name = { \
+			#name, \
+			cycles, \
+			flags, \
+			NULL, \
+			::R5900::Interpreter::OpcodeImpl::COP0::name, \
+			nullptr, \
+			::R5900::OpcodeDisasm::name \
+		}
+
+	#	define MakeOpcode1( name, cycles, flags ) \
+		static const OPCODE name = { \
+			#name, \
+			cycles, \
+			flags, \
+			NULL, \
+			::R5900::Interpreter::OpcodeImpl::COP1::name, \
+			nullptr, \
+			::R5900::OpcodeDisasm::name \
+		}
+#endif
 
 	#	define MakeOpcodeClass( name ) \
 		static const OPCODE name = { \
@@ -394,10 +426,10 @@ namespace R5900
 		MakeOpcode0( MFC0, CopDefault, 0 );
 		MakeOpcode0( MTC0, CopDefault, 0 );
 
-		MakeOpcode0( BC0F, Branch, 0 );
-		MakeOpcode0( BC0T, Branch, 0 );
-		MakeOpcode0( BC0FL, Branch, 0 );
-		MakeOpcode0( BC0TL, Branch, 0 );
+		MakeOpcode0(BC0F, Branch, IS_BRANCH | BRANCHTYPE_BC0 | CONDTYPE_EQ);
+		MakeOpcode0(BC0T, Branch, IS_BRANCH | BRANCHTYPE_BC0 | CONDTYPE_NE);
+		MakeOpcode0(BC0FL, Branch, IS_BRANCH | BRANCHTYPE_BC0 | CONDTYPE_EQ | IS_LIKELY);
+		MakeOpcode0(BC0TL, Branch, IS_BRANCH | BRANCHTYPE_BC0 | CONDTYPE_NE | IS_LIKELY);
 
 		MakeOpcode0( TLBR, CopDefault, 0 );
 		MakeOpcode0( TLBWI, CopDefault, 0 );
@@ -626,7 +658,7 @@ namespace R5900
 
 		const OPCODE& Class_SPECIAL(u32 op) { return tbl_Special[op & 0x3F]; }
 		const OPCODE& Class_REGIMM(u32 op)  { return tbl_RegImm[(op >> 16) & 0x1F]; }
-		
+
 		const OPCODE& Class_MMI(u32 op)  { return tbl_MMI[op & 0x3F]; }
 		const OPCODE& Class_MMI0(u32 op) { return tbl_MMI0[(op >> 6) & 0x1F]; }
 		const OPCODE& Class_MMI1(u32 op) { return tbl_MMI1[(op >> 6) & 0x1F]; }
@@ -634,7 +666,7 @@ namespace R5900
 		const OPCODE& Class_MMI3(u32 op) { return tbl_MMI3[(op >> 6) & 0x1F]; }
 
 		const OPCODE& Class_COP0(u32 op) { return tbl_COP0[(op >> 21) & 0x1F]; }
-		const OPCODE& Class_COP0_BC0(u32 op) { return tbl_COP0_BC0[(cpuRegs.code >> 16) & 0x03]; }
+		const OPCODE& Class_COP0_BC0(u32 op) { return tbl_COP0_BC0[(op >> 16) & 0x03]; }
 		const OPCODE& Class_COP0_C0(u32 op) { return tbl_COP0_C0[op & 0x3F]; }
 
 		const OPCODE& Class_COP1(u32 op) { return tbl_COP1[(op >> 21) & 0x1F]; }

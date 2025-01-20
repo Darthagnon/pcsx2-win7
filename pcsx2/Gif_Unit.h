@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 #include <deque>
@@ -19,6 +7,7 @@
 #include "Vif.h"
 #include "GS.h"
 #include "GS/GSRegs.h"
+#include "MTGS.h"
 
 // FIXME common path ?
 #include "common/boost_spsc_queue.hpp"
@@ -27,7 +16,7 @@ struct GS_Packet;
 extern void Gif_MTGS_Wait(bool isMTVU);
 extern void Gif_FinishIRQ();
 extern bool Gif_HandlerAD(u8* pMem);
-extern bool Gif_HandlerAD_MTVU(u8* pMem);
+extern void Gif_HandlerAD_MTVU(u8* pMem);
 extern bool Gif_HandlerAD_Debug(u8* pMem);
 extern void Gif_AddBlankGSPacket(u32 size, GIF_PATH path);
 extern void Gif_AddGSPacketMTVU(GS_Packet& gsPack, GIF_PATH path);
@@ -65,7 +54,7 @@ struct Gif_Tag
 		setTag(pMem, analyze);
 	}
 
-	__ri void Reset() { memzero(*this); }
+	__ri void Reset() { std::memset(this, 0, sizeof(*this)); }
 	__ri u8 curReg() { return regs[nRegIdx & 0xf]; }
 
 	__ri void packedStep()
@@ -129,6 +118,22 @@ struct Gif_Tag
 
 		// write out unpacked registers
 		_mm_storeu_si128(reinterpret_cast<__m128i*>(regs), vregs);
+#elif defined(_M_ARM64)
+		// zero out bits for registers which shouldn't be tested
+		u64 REGS64;
+		std::memcpy(&REGS64, tag.REGS, sizeof(u64));
+		REGS64 &= (0xFFFFFFFFFFFFFFFFULL >> (64 - nRegs * 4));
+		uint8x16_t vregs = vsetq_lane_u64(REGS64, vdupq_n_u64(0), 0);
+
+		// get upper nibbles, interleave with lower nibbles, clear upper bits from low nibbles
+		vregs = vandq_u8(vzip1q_u8(vregs, vshrq_n_u8(vregs, 4)), vdupq_n_u8(0x0F));
+
+		// compare with GIF_REG_A_D, set hasAD if any lanes passed
+		const uint8x16_t comp = vceqq_u8(vregs, vdupq_n_u8(GIF_REG_A_D));
+		hasAD = vmaxvq_u8(comp) & 1;
+
+		// write out unpacked registers
+		vst1q_u8(regs, vregs);
 #else
 		// Reference C implementation.
 		hasAD = false;
@@ -163,21 +168,22 @@ struct GS_Packet
 	s32 cycles;     // EE Cycles taken to process this GS packet
 	s32 readAmount; // Dummy read-amount data needed for proper buffer calculations
 	GS_Packet() { Reset(); }
-	void Reset() { memzero(*this); }
+	void Reset() { std::memset(this, 0, sizeof(*this)); }
 };
 
 struct GS_SIGNAL
 {
 	u32 data[2];
 	bool queued;
-	void Reset() { memzero(*this); }
+	void Reset() { std::memset(this, 0, sizeof(*this)); }
 };
 
 struct GS_FINISH
 {
 	bool gsFINISHFired;
+	bool gsFINISHPending;
 
-	void Reset() { memzero(*this); }
+	void Reset() { std::memset(this, 0, sizeof(*this)); }
 };
 
 static __fi void incTag(u32& offset, u32& size, u32 incAmount)
@@ -193,7 +199,7 @@ struct Gif_Path_MTVU
 	// Set a size based on MTGS but keep a factor 2 to avoid too waste to much
 	// memory overhead. Note the struct is instantied 3 times (for each gif
 	// path)
-	ringbuffer_base<GS_Packet, RingBufferSize / 2> gsPackQueue;
+	ringbuffer_base<GS_Packet, MTGS::RingBufferSize / 2> gsPackQueue;
 	Gif_Path_MTVU() { Reset(); }
 	void Reset()
 	{
@@ -239,7 +245,10 @@ struct Gif_Path
 			if (!isMTVU()) // MTVU Freaks out if you try to reset it, so let's just let it transfer
 			{
 				GUNIT_WARN("Gif Path %d - Soft Reset", idx + 1);
+				gifTag.Reset();
+				gsPack.Reset();
 				curSize = curOffset;
+				gsPack.offset = curOffset;
 			}
 			return;
 		}
@@ -319,7 +328,7 @@ struct Gif_Path
 				break;      // Enough free front space
 			mtgsReadWait(); // Let MTGS run to free up buffer space
 		}
-		pxAssertDev(curSize + size <= buffSize, "Gif Path Buffer Overflow!");
+		pxAssertMsg(curSize + size <= buffSize, "Gif Path Buffer Overflow!");
 		memcpy(&buffer[curSize], pMem, size);
 		curSize += size;
 	}
@@ -457,7 +466,8 @@ struct Gif_Path
 						break; // Exit Early
 					if (gifTag.curReg() == GIF_REG_A_D)
 					{
-						pxAssert(!Gif_HandlerAD_MTVU(&buffer[curOffset]));
+						// pxAssertMsg(Gif_HandlerAD_Debug(&buffer[curOffset]), "Unhandled GIF packet");
+						Gif_HandlerAD_MTVU(&buffer[curOffset]);
 					}
 					incTag(curOffset, gsPack.size, 16); // 1 QWC
 					gifTag.packedStep();
@@ -834,7 +844,8 @@ struct Gif_Unit
 			FlushToMTGS();
 		}
 
-		Gif_FinishIRQ();
+		if(!checkPaths(stat.APATH != 1, stat.APATH != 2, stat.APATH != 3, true))
+			Gif_FinishIRQ();
 
 		//Path3 can rewind the DMA, so we send back the amount we go back!
 		if (isPath3)

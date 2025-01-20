@@ -19,18 +19,24 @@
     <Filter Include="Tools\Input Recording">
       <UniqueIdentifier>{d5c14016-9690-4e49-bcb9-a634a937951a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Debugger">
+      <UniqueIdentifier>{ddb40cc4-9996-4ade-b647-eb549063553c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Debugger\Models">
+      <UniqueIdentifier>{f4084ca0-d9d5-4584-b9d2-063db9f67de2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Translations">
+      <UniqueIdentifier>{ad04f939-64a0-4039-97aa-a38b8aa46855}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Debugger\SymbolTree">
+      <UniqueIdentifier>{a622b871-62ae-4b70-b9b2-6ee30ce7fa7a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="..\pcsx2\PCSX2.rc">
-      <Filter>Resources</Filter>
-    </ResourceCompile>
-    <ResourceCompile Include="..\pcsx2\windows\wxResources.rc">
-      <Filter>Resources</Filter>
-    </ResourceCompile>
+    <ResourceCompile Include="..\pcsx2\windows\PCSX2.rc" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="PrecompiledHeader.cpp" />
-    <ClCompile Include="Main.cpp" />
     <ClCompile Include="QtHost.cpp" />
     <ClCompile Include="MainWindow.cpp" />
     <ClCompile Include="$(IntDir)moc_MainWindow.cpp">
@@ -43,9 +49,8 @@
     <ClCompile Include="$(IntDir)moc_DisplayWidget.cpp">
       <Filter>moc</Filter>
     </ClCompile>
-    <ClCompile Include="EmuThread.cpp" />
     <ClCompile Include="QtUtils.cpp" />
-    <ClCompile Include="$(IntDir)moc_EmuThread.cpp">
+    <ClCompile Include="$(IntDir)moc_QtHost.cpp">
       <Filter>moc</Filter>
     </ClCompile>
     <ClCompile Include="QtKeyCodes.cpp" />
@@ -64,10 +69,7 @@
     <ClCompile Include="Settings\InterfaceSettingsWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
-    <ClCompile Include="Settings\SettingsDialog.cpp">
-      <Filter>Settings</Filter>
-    </ClCompile>
-    <ClCompile Include="Settings\SystemSettingsWidget.cpp">
+    <ClCompile Include="Settings\SettingsWindow.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
     <ClCompile Include="$(IntDir)Settings\moc_BIOSSettingsWidget.cpp">
@@ -85,16 +87,13 @@
     <ClCompile Include="$(IntDir)Settings\moc_InterfaceSettingsWidget.cpp">
       <Filter>moc</Filter>
     </ClCompile>
-    <ClCompile Include="$(IntDir)Settings\moc_SettingsDialog.cpp">
+    <ClCompile Include="$(IntDir)Settings\moc_SettingsWindow.cpp">
       <Filter>moc</Filter>
     </ClCompile>
-    <ClCompile Include="$(IntDir)Settings\moc_SystemSettingsWidget.cpp">
+    <ClCompile Include="$(IntDir)Settings\moc_AdvancedSettingsWidget.cpp">
       <Filter>moc</Filter>
     </ClCompile>
-    <ClCompile Include="$(IntDir)Settings\moc_AdvancedSystemSettingsWidget.cpp">
-      <Filter>moc</Filter>
-    </ClCompile>
-    <ClCompile Include="Settings\AdvancedSystemSettingsWidget.cpp">
+    <ClCompile Include="Settings\AdvancedSettingsWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
     <ClCompile Include="$(IntDir)Settings\moc_GameFixSettingsWidget.cpp">
@@ -134,7 +133,7 @@
     <ClCompile Include="$(IntDir)moc_AboutDialog.cpp">
       <Filter>moc</Filter>
     </ClCompile>
-    <ClCompile Include="$(IntDir)Settings\moc_ControllerSettingsDialog.cpp">
+    <ClCompile Include="$(IntDir)Settings\moc_ControllerSettingsWindow.cpp">
       <Filter>moc</Filter>
     </ClCompile>
     <ClCompile Include="$(IntDir)GameList\moc_GameListModel.cpp">
@@ -146,17 +145,20 @@
     <ClCompile Include="$(IntDir)GameList\moc_GameListWidget.cpp">
       <Filter>moc</Filter>
     </ClCompile>
-    <ClCompile Include="Settings\ControllerSettingsDialog.cpp">
+    <ClCompile Include="Settings\ControllerSettingsWindow.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
-    <ClCompile Include="Settings\ControllerBindingWidgets.cpp">
+    <ClCompile Include="Settings\ControllerBindingWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
-    <ClCompile Include="$(IntDir)Settings\moc_ControllerBindingWidgets.cpp">
+    <ClCompile Include="$(IntDir)Settings\moc_ControllerBindingWidget.cpp">
       <Filter>moc</Filter>
     </ClCompile>
     <ClCompile Include="Settings\ControllerGlobalSettingsWidget.cpp">
       <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Settings\moc_MemoryCardConvertDialog.cpp">
+      <Filter>moc</Filter>
     </ClCompile>
     <ClCompile Include="$(IntDir)Settings\moc_MemoryCardSettingsWidget.cpp">
       <Filter>moc</Filter>
@@ -182,16 +184,19 @@
     <ClCompile Include="Settings\GameSummaryWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
+    <ClCompile Include="Settings\MemoryCardConvertDialog.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
     <ClCompile Include="Settings\MemoryCardSettingsWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
     <ClCompile Include="Settings\AudioSettingsWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
-    <ClCompile Include="$(IntDir)Settings\moc_CreateMemoryCardDialog.cpp">
+    <ClCompile Include="$(IntDir)Settings\moc_MemoryCardCreateDialog.cpp">
       <Filter>moc</Filter>
     </ClCompile>
-    <ClCompile Include="Settings\CreateMemoryCardDialog.cpp">
+    <ClCompile Include="Settings\MemoryCardCreateDialog.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
     <ClCompile Include="Settings\DEV9DnsHostDialog.cpp">
@@ -213,6 +218,9 @@
     <ClCompile Include="$(IntDir)Tools\InputRecording\moc_NewInputRecordingDlg.cpp">
       <Filter>moc</Filter>
     </ClCompile>
+    <ClCompile Include="$(IntDir)Tools\InputRecording\moc_InputRecordingViewer.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
     <ClCompile Include="Tools\InputRecording\NewInputRecordingDlg.cpp">
       <Filter>Tools\Input Recording</Filter>
     </ClCompile>
@@ -223,6 +231,167 @@
     <ClCompile Include="$(IntDir)Settings\moc_FolderSettingsWidget.cpp">
       <Filter>moc</Filter>
     </ClCompile>
+    <ClCompile Include="$(IntDir)moc_CoverDownloadDialog.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="CoverDownloadDialog.cpp" />
+    <ClCompile Include="QtProgressCallback.cpp" />
+    <ClCompile Include="$(IntDir)moc_QtProgressCallback.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="Settings\AchievementSettingsWidget.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="Settings\AchievementLoginDialog.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Settings\moc_AchievementSettingsWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Settings\moc_AchievementLoginDialog.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="Settings\MemoryCardConvertWorker.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="Tools\InputRecording\InputRecordingViewer.cpp">
+      <Filter>Tools\Input Recording</Filter>
+    </ClCompile>
+    <ClCompile Include="Settings\DebugAnalysisSettingsWidget.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Settings\moc_DebugAnalysisSettingsWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="Settings\DebugSettingsWidget.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Settings\moc_DebugSettingsWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\AnalysisOptionsDialog.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\DebuggerWindow.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\DisassemblyWidget.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\CpuWidget.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\RegisterWidget.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\MemorySearchWidget.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\MemoryViewWidget.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\BreakpointDialog.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\Models\BreakpointModel.cpp">
+      <Filter>Debugger\Models</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\Models\ThreadModel.cpp">
+      <Filter>Debugger\Models</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\Models\StackModel.cpp">
+      <Filter>Debugger\Models</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\Models\SavedAddressesModel.cpp">
+      <Filter>Debugger\Models</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\moc_AnalysisOptionsDialog.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\moc_CpuWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\moc_DebuggerWindow.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\moc_DisassemblyWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\moc_RegisterWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\moc_MemorySearchWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\moc_MemoryViewWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\moc_BreakpointDialog.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\Models\moc_BreakpointModel.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\Models\moc_ThreadModel.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\Models\moc_StackModel.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Debugger\Models\moc_SavedAddressesModel.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="ColorPickerButton.cpp" />
+    <ClCompile Include="$(IntDir)moc_ColorPickerButton.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="Themes.cpp" />
+    <ClCompile Include="Settings\GamePatchSettingsWidget.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="Settings\GameCheatSettingsWidget.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Settings\moc_GamePatchSettingsWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="$(IntDir)Settings\moc_GameCheatSettingsWidget.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="Translations.cpp" />
+    <ClCompile Include="SetupWizardDialog.cpp" />
+    <ClCompile Include="$(IntDir)moc_SetupWizardDialog.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="LogWindow.cpp" />
+    <ClCompile Include="$(IntDir)moc_LogWindow.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\DebuggerSettingsManager.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\SymbolTree\NewSymbolDialogs.cpp">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\SymbolTree\SymbolTreeDelegates.cpp">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\SymbolTree\SymbolTreeLocation.cpp">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\SymbolTree\SymbolTreeModel.cpp">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\SymbolTree\SymbolTreeNode.cpp">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\SymbolTree\SymbolTreeWidgets.cpp">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClCompile>
+    <ClCompile Include="Debugger\SymbolTree\TypeString.cpp">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClCompile>
+    <ClCompile Include="VCRuntimeChecker.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Manifest Include="..\pcsx2\windows\PCSX2.manifest">
@@ -231,7 +400,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PrecompiledHeader.h" />
-    <ClInclude Include="QtHost.h" />
     <ClInclude Include="QtUtils.h" />
     <ClInclude Include="SettingWidgetBinder.h" />
     <ClInclude Include="Settings\HddCreateQt.h">
@@ -240,11 +408,37 @@
     <ClInclude Include="Settings\ControllerSettingWidgetBinder.h">
       <Filter>Settings</Filter>
     </ClInclude>
+    <ClInclude Include="Settings\MemoryCardConvertWorker.h">
+      <Filter>Settings</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\DebuggerSettingsManager.h">
+      <Filter>Debugger</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\SymbolTree\NewSymbolDialogs.h">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\SymbolTree\SymbolTreeDelegates.h">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\SymbolTree\SymbolTreeLocation.h">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\SymbolTree\SymbolTreeModel.h">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\SymbolTree\SymbolTreeNode.h">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\SymbolTree\SymbolTreeWidgets.h">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\SymbolTree\TypeString.h">
+      <Filter>Debugger\SymbolTree</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="MainWindow.h" />
     <QtMoc Include="DisplayWidget.h" />
-    <QtMoc Include="EmuThread.h" />
     <QtMoc Include="Settings\BIOSSettingsWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
@@ -260,13 +454,10 @@
     <QtMoc Include="Settings\InterfaceSettingsWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
-    <QtMoc Include="Settings\SettingsDialog.h">
+    <QtMoc Include="Settings\SettingsWindow.h">
       <Filter>Settings</Filter>
     </QtMoc>
-    <QtMoc Include="Settings\SystemSettingsWidget.h">
-      <Filter>Settings</Filter>
-    </QtMoc>
-    <QtMoc Include="Settings\AdvancedSystemSettingsWidget.h">
+    <QtMoc Include="Settings\AdvancedSettingsWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
     <QtMoc Include="Settings\GameFixSettingsWidget.h">
@@ -291,10 +482,10 @@
     <QtMoc Include="GameList\GameListRefreshThread.h">
       <Filter>GameList</Filter>
     </QtMoc>
-    <QtMoc Include="Settings\ControllerSettingsDialog.h">
+    <QtMoc Include="Settings\ControllerSettingsWindow.h">
       <Filter>Settings</Filter>
     </QtMoc>
-    <QtMoc Include="Settings\ControllerBindingWidgets.h">
+    <QtMoc Include="Settings\ControllerBindingWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
     <QtMoc Include="Settings\ControllerGlobalSettingsWidget.h">
@@ -303,13 +494,16 @@
     <QtMoc Include="Settings\GameSummaryWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
+    <QtMoc Include="Settings\MemoryCardConvertDialog.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
     <QtMoc Include="Settings\MemoryCardSettingsWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
     <QtMoc Include="Settings\AudioSettingsWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
-    <QtMoc Include="Settings\CreateMemoryCardDialog.h">
+    <QtMoc Include="Settings\MemoryCardCreateDialog.h">
       <Filter>Settings</Filter>
     </QtMoc>
     <QtMoc Include="Settings\DEV9DnsHostDialog.h">
@@ -325,7 +519,70 @@
     <QtMoc Include="Tools\InputRecording\NewInputRecordingDlg.h">
       <Filter>Tools\Input Recording</Filter>
     </QtMoc>
-    <QtMoc Include="Settings\FolderSettingsWidget.h" />
+    <QtMoc Include="Settings\FolderSettingsWidget.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
+    <QtMoc Include="QtHost.h" />
+    <QtMoc Include="CoverDownloadDialog.h" />
+    <QtMoc Include="QtProgressCallback.h" />
+    <QtMoc Include="Settings\AchievementLoginDialog.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
+    <QtMoc Include="Settings\AchievementSettingsWidget.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
+    <QtMoc Include="Tools\InputRecording\InputRecordingViewer.h" />
+    <QtMoc Include="Settings\DebugAnalysisSettingsWidget.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
+    <QtMoc Include="Settings\DebugSettingsWidget.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\AnalysisOptionsDialog.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\DebuggerWindow.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\DisassemblyWidget.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\CpuWidget.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\RegisterWidget.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\MemorySearchWidget.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\MemoryViewWidget.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\BreakpointDialog.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\Models\BreakpointModel.h">
+      <Filter>Debugger\Models</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\Models\ThreadModel.h">
+      <Filter>Debugger\Models</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\Models\StackModel.h">
+      <Filter>Debugger\Models</Filter>
+    </QtMoc>
+    <QtMoc Include="Debugger\Models\SavedAddressesModel.h">
+      <Filter>Debugger\Models</Filter>
+    </QtMoc>
+    <QtMoc Include="ColorPickerButton.h" />
+    <QtMoc Include="SetupWizardDialog.h" />
+    <QtMoc Include="Settings\GameCheatSettingsWidget.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
+    <QtMoc Include="Settings\GamePatchSettingsWidget.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
+    <QtMoc Include="LogWindow.h" />
   </ItemGroup>
   <ItemGroup>
     <QtResource Include="resources\resources.qrc">
@@ -349,13 +606,10 @@
     <QtUi Include="Settings\InterfaceSettingsWidget.ui">
       <Filter>Settings</Filter>
     </QtUi>
-    <QtUi Include="Settings\SystemSettingsWidget.ui">
+    <QtUi Include="Settings\SettingsWindow.ui">
       <Filter>Settings</Filter>
     </QtUi>
-    <QtUi Include="Settings\SettingsDialog.ui">
-      <Filter>Settings</Filter>
-    </QtUi>
-    <QtUi Include="Settings\AdvancedSystemSettingsWidget.ui">
+    <QtUi Include="Settings\AdvancedSettingsWidget.ui">
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\GameFixSettingsWidget.ui">
@@ -364,10 +618,13 @@
     <QtUi Include="Settings\InputBindingDialog.ui">
       <Filter>Settings</Filter>
     </QtUi>
-    <QtUi Include="Settings\ControllerSettingsDialog.ui">
+    <QtUi Include="Settings\ControllerSettingsWindow.ui">
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\ControllerBindingWidget_DualShock2.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\ControllerBindingWidget_Guitar.ui">
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\ControllerBindingWidget.ui">
@@ -379,13 +636,16 @@
     <QtUi Include="Settings\GameSummaryWidget.ui">
       <Filter>Settings</Filter>
     </QtUi>
+    <QtUi Include="Settings\MemoryCardConvertDialog.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
     <QtUi Include="Settings\MemoryCardSettingsWidget.ui">
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\AudioSettingsWidget.ui">
       <Filter>Settings</Filter>
     </QtUi>
-    <QtUi Include="Settings\CreateMemoryCardDialog.ui">
+    <QtUi Include="Settings\MemoryCardCreateDialog.ui">
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\DEV9DnsHostDialog.ui">
@@ -397,14 +657,132 @@
     <QtUi Include="GameList\EmptyGameListWidget.ui">
       <Filter>GameList</Filter>
     </QtUi>
+    <QtUi Include="GameList\GameListWidget.ui">
+      <Filter>GameList</Filter>
+    </QtUi>
     <QtUi Include="AutoUpdaterDialog.ui" />
     <QtUi Include="Tools\InputRecording\NewInputRecordingDlg.ui">
       <Filter>Tools\Input Recording</Filter>
+    </QtUi>
+    <QtUi Include="Settings\ControllerMacroWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\ControllerMacroEditWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\AchievementSettingsWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\AchievementLoginDialog.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="CoverDownloadDialog.ui" />
+    <QtUi Include="Tools\InputRecording\InputRecordingViewer.ui">
+      <Filter>Tools\Input Recording</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBDeviceWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\DebugAnalysisSettingsWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\DebugSettingsWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Debugger\AnalysisOptionsDialog.ui">
+      <Filter>Debugger</Filter>
+    </QtUi>
+    <QtUi Include="Debugger\DebuggerWindow.ui">
+      <Filter>Debugger</Filter>
+    </QtUi>
+    <QtUi Include="Debugger\DisassemblyWidget.ui">
+      <Filter>Debugger</Filter>
+    </QtUi>
+    <QtUi Include="Debugger\CpuWidget.ui">
+      <Filter>Debugger</Filter>
+    </QtUi>
+    <QtUi Include="Debugger\RegisterWidget.ui">
+      <Filter>Debugger</Filter>
+    </QtUi>
+    <QtUi Include="Debugger\MemorySearchWidget.ui">
+      <Filter>Debugger</Filter>
+    </QtUi>
+    <QtUi Include="Debugger\MemoryViewWidget.ui">
+      <Filter>Debugger</Filter>
+    </QtUi>
+    <QtUi Include="Debugger\BreakpointDialog.ui">
+      <Filter>Debugger</Filter>
+    </QtUi>
+    <QtUi Include="Settings\ControllerLEDSettingsDialog.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\ControllerMouseSettingsDialog.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\GameCheatSettingsWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\GamePatchSettingsWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="SetupWizardDialog.ui" />
+    <QtUi Include="Settings\USBBindingWidget_Buzz.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_DenshaCon.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_DrivingForce.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_Gametrak.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_GTForce.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_GunCon2.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_RealPlay.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_RyojouhenCon.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_ShinkansenCon.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\USBBindingWidget_TranceVibrator.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\AudioExpansionSettingsDialog.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\AudioStretchSettingsDialog.ui">
+      <Filter>Settings</Filter>
     </QtUi>
   </ItemGroup>
   <ItemGroup>
     <None Include="Settings\FolderSettingsWidget.ui">
       <Filter>Settings</Filter>
     </None>
+    <None Include="Settings\ControllerBindingWidget_Popn.ui">
+      <Filter>Settings</Filter>
+    </None>
+    <None Include="Settings\ControllerMappingSettingsDialog.ui">
+      <Filter>Settings</Filter>
+    </None>
+    <None Include="Debugger\SymbolTree\NewSymbolDialog.ui">
+      <Filter>Debugger\SymbolTree</Filter>
+    </None>
+    <None Include="Debugger\SymbolTree\SymbolTreeWidget.ui">
+      <Filter>Debugger\SymbolTree</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <QtTs Include="Translations\pcsx2-qt_en.ts">
+      <Filter>Translations</Filter>
+    </QtTs>
   </ItemGroup>
 </Project>

@@ -1,5 +1,9 @@
-#if defined(SHADER_MODEL) || defined(FXAA_GLSL_130) || defined(FXAA_GLSL_VK) || defined(__METAL_VERSION__)
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
+#ifndef FXAA_HLSL
+    #define FXAA_HLSL 0
+#endif
 #ifndef FXAA_GLSL_130
     #define FXAA_GLSL_130 0
 #endif
@@ -19,6 +23,7 @@
 in vec2 PSin_t;
 
 layout(location = 0) out vec4 SV_Target0;
+layout(binding = 0) uniform sampler2D TextureSampler;
 
 #elif (FXAA_GLSL_VK == 1)
 
@@ -26,7 +31,7 @@ layout(location = 0) in vec2 PSin_t;
 layout(location = 0) out vec4 SV_Target0;
 layout(set = 0, binding = 0) uniform sampler2D TextureSampler;
 
-#elif (SHADER_MODEL >= 0x400)
+#elif (FXAA_HLSL == 1)
 Texture2D Texture : register(t0);
 SamplerState TextureSampler : register(s0);
 
@@ -55,31 +60,7 @@ static constexpr sampler MAIN_SAMPLER(coord::normalized, address::clamp_to_edge,
                              [FXAA CODE SECTION]
 ------------------------------------------------------------------------------*/
 
-#if (SHADER_MODEL >= 0x500)
-#define FXAA_HLSL_5 1
-#define FXAA_GATHER4_ALPHA 1
-
-#elif (SHADER_MODEL >= 0x400)
-#define FXAA_HLSL_4 1
-#define FXAA_GATHER4_ALPHA 0
-
-#elif (FXAA_GLSL_130 == 1 || FXAA_GLSL_VK == 1)
-#define FXAA_GATHER4_ALPHA 1
-
-#elif defined(__METAL_VERSION__)
-#define FXAA_GATHER4_ALPHA 1
-#endif
-
-#if (FXAA_HLSL_5 == 1)
-struct FxaaTex { SamplerState smpl; Texture2D tex; };
-#define FxaaTexTop(t, p) t.tex.SampleLevel(t.smpl, p, 0.0)
-#define FxaaTexOff(t, p, o, r) t.tex.SampleLevel(t.smpl, p, 0.0, o)
-#define FxaaTexAlpha4(t, p) t.tex.GatherAlpha(t.smpl, p)
-#define FxaaTexOffAlpha4(t, p, o) t.tex.GatherAlpha(t.smpl, p, o)
-#define FxaaDiscard clip(-1)
-#define FxaaSat(x) saturate(x)
-
-#elif (FXAA_HLSL_4 == 1)
+#if (FXAA_HLSL == 1)
 struct FxaaTex { SamplerState smpl; Texture2D tex; };
 #define FxaaTexTop(t, p) t.tex.SampleLevel(t.smpl, p, 0.0)
 #define FxaaTexOff(t, p, o, r) t.tex.SampleLevel(t.smpl, p, 0.0, o)
@@ -97,18 +78,10 @@ struct FxaaTex { SamplerState smpl; Texture2D tex; };
 #define FxaaTexTop(t, p) textureLod(t, p, 0.0)
 #define FxaaTexOff(t, p, o, r) textureLodOffset(t, p, 0.0, o)
 
-#if (FXAA_GATHER4_ALPHA == 1)
-// use #extension GL_ARB_gpu_shader5 : enable
-#define FxaaTexAlpha4(t, p) textureGather(t, p, 3)
-#define FxaaTexOffAlpha4(t, p, o) textureGatherOffset(t, p, o, 3)
-#endif
-
 #elif defined(__METAL_VERSION__)
 #define FxaaTex texture2d<float>
 #define FxaaTexTop(t, p) t.sample(MAIN_SAMPLER, p)
 #define FxaaTexOff(t, p, o, r) t.sample(MAIN_SAMPLER, p, o)
-#define FxaaTexAlpha4(t, p) t.gather(MAIN_SAMPLER, p, 0, component::w)
-#define FxaaTexOffAlpha4(t, p, o) t.gather(MAIN_SAMPLER, p, o, component::w)
 #define FxaaDiscard discard_fragment()
 #define FxaaSat(x) saturate(x)
 #endif
@@ -191,21 +164,6 @@ float4 FxaaPixelShader(float2 pos, FxaaTex tex, float2 fxaaRcpFrame, float fxaaS
 	posM.x = pos.x;
 	posM.y = pos.y;
 
-	#if (FXAA_GATHER4_ALPHA == 1)
-	float4 rgbyM = FxaaTexTop(tex, posM);
-	float4 luma4A = FxaaTexAlpha4(tex, posM);
-	float4 luma4B = FxaaTexOffAlpha4(tex, posM, int2(-1, -1));
-	rgbyM.w = RGBLuminance(rgbyM.xyz);
-
-	#define lumaM rgbyM.w
-	#define lumaE luma4A.z
-	#define lumaS luma4A.x
-	#define lumaSE luma4A.y
-	#define lumaNW luma4B.w
-	#define lumaN luma4B.z
-	#define lumaW luma4B.x
-
-	#else
 	float4 rgbyM = FxaaTexTop(tex, posM);
 	rgbyM.w = RGBLuminance(rgbyM.xyz);
 	#define lumaM rgbyM.w
@@ -214,7 +172,6 @@ float4 FxaaPixelShader(float2 pos, FxaaTex tex, float2 fxaaRcpFrame, float fxaaS
 	float lumaE = FxaaLuma(FxaaTexOff(tex, posM, int2( 1, 0), fxaaRcpFrame.xy));
 	float lumaN = FxaaLuma(FxaaTexOff(tex, posM, int2( 0,-1), fxaaRcpFrame.xy));
 	float lumaW = FxaaLuma(FxaaTexOff(tex, posM, int2(-1, 0), fxaaRcpFrame.xy));
-	#endif
 
 	float maxSM = max(lumaS, lumaM);
 	float minSM = min(lumaS, lumaM);
@@ -234,15 +191,10 @@ float4 FxaaPixelShader(float2 pos, FxaaTex tex, float2 fxaaRcpFrame, float fxaaS
 	if(earlyExit) { return rgbyM; }
 	#endif
 
-	#if (FXAA_GATHER4_ALPHA == 0)
 	float lumaNW = FxaaLuma(FxaaTexOff(tex, posM, int2(-1,-1), fxaaRcpFrame.xy));
 	float lumaSE = FxaaLuma(FxaaTexOff(tex, posM, int2( 1, 1), fxaaRcpFrame.xy));
 	float lumaNE = FxaaLuma(FxaaTexOff(tex, posM, int2( 1,-1), fxaaRcpFrame.xy));
 	float lumaSW = FxaaLuma(FxaaTexOff(tex, posM, int2(-1, 1), fxaaRcpFrame.xy));
-	#else
-	float lumaNE = FxaaLuma(FxaaTexOff(tex, posM, int2( 1,-1), fxaaRcpFrame.xy));
-	float lumaSW = FxaaLuma(FxaaTexOff(tex, posM, int2(-1, 1), fxaaRcpFrame.xy));
-	#endif
 
 	float lumaNS = lumaN + lumaS;
 	float lumaWE = lumaW + lumaE;
@@ -488,14 +440,14 @@ float4 FxaaPixelShader(float2 pos, FxaaTex tex, float2 fxaaRcpFrame, float fxaaS
 
 #if (FXAA_GLSL_130 == 1 || FXAA_GLSL_VK == 1)
 float4 FxaaPass(float4 FxaaColor, float2 uv0)
-#elif (SHADER_MODEL >= 0x400)
+#elif (FXAA_HLSL == 1)
 float4 FxaaPass(float4 FxaaColor : COLOR0, float2 uv0 : TEXCOORD0)
 #elif defined(__METAL_VERSION__)
 float4 FxaaPass(float4 FxaaColor, float2 uv0, texture2d<float> tex)
 #endif
 {
 
-	#if (SHADER_MODEL >= 0x400)
+	#if (FXAA_HLSL == 1)
 	FxaaTex tex;
 	tex.tex = Texture;
 	tex.smpl = TextureSampler;
@@ -505,7 +457,7 @@ float4 FxaaPass(float4 FxaaColor, float2 uv0, texture2d<float> tex)
 	FxaaColor = FxaaPixelShader(uv0, tex, 1.0/PixelSize.xy, FxaaSubpixMax, FxaaEdgeThreshold, FxaaEdgeThresholdMin);
 
 	#elif (FXAA_GLSL_130 == 1 || FXAA_GLSL_VK == 1)
-	vec2 PixelSize = textureSize(TextureSampler, 0);
+	vec2 PixelSize = vec2(textureSize(TextureSampler, 0));
 	FxaaColor = FxaaPixelShader(uv0, TextureSampler, 1.0/PixelSize.xy, FxaaSubpixMax, FxaaEdgeThreshold, FxaaEdgeThresholdMin);
 	#elif defined(__METAL_VERSION__)
 	float2 PixelSize = float2(tex.get_width(), tex.get_height());
@@ -526,11 +478,11 @@ void main()
 	color      = PreGammaPass(color);
 	color      = FxaaPass(color, PSin_t);
 
-	SV_Target0 = color;
+	SV_Target0 = float4(color.rgb, 1.0);
 }
 
-#elif (SHADER_MODEL >= 0x400)
-PS_OUTPUT ps_main(VS_OUTPUT input)
+#elif (FXAA_HLSL == 1)
+PS_OUTPUT main(VS_OUTPUT input)
 {
 	PS_OUTPUT output;
 
@@ -539,12 +491,10 @@ PS_OUTPUT ps_main(VS_OUTPUT input)
 	color = PreGammaPass(color);
 	color = FxaaPass(color, input.t);
 
-	output.c = color;
+	output.c = float4(color.rgb, 1.0);
 	
 	return output;
 }
 
 // Metal main function in in fxaa.metal
-#endif
-
 #endif

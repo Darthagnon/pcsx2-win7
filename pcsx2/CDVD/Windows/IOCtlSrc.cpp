@@ -1,25 +1,16 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "CDVD/CDVDdiscReader.h"
 #include "CDVD/CDVD.h"
+
+#include "common/Console.h"
+#include "common/Error.h"
 
 #include <winioctl.h>
 #include <ntddcdvd.h>
 #include <ntddcdrm.h>
+#include <errno.h>
 // "typedef ignored" warning will disappear once we move to the Windows 10 SDK.
 #pragma warning(push)
 #pragma warning(disable : 4091)
@@ -30,11 +21,11 @@
 #include <cstdlib>
 #include <stdexcept>
 
+#include "fmt/format.h"
+
 IOCtlSrc::IOCtlSrc(std::string filename)
 	: m_filename(std::move(filename))
 {
-	if (!Reopen())
-		throw std::runtime_error(" * CDVD: Error opening source.\n");
 }
 
 IOCtlSrc::~IOCtlSrc()
@@ -48,7 +39,7 @@ IOCtlSrc::~IOCtlSrc()
 
 // If a new disc is inserted, ReadFile will fail unless the device is closed
 // and reopened.
-bool IOCtlSrc::Reopen()
+bool IOCtlSrc::Reopen(Error* error)
 {
 	if (m_device != INVALID_HANDLE_VALUE)
 		CloseHandle(m_device);
@@ -58,7 +49,10 @@ bool IOCtlSrc::Reopen()
 						  FILE_SHARE_READ, nullptr, OPEN_EXISTING,
 						  FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
 	if (m_device == INVALID_HANDLE_VALUE)
+	{
+		Error::SetWin32(error, GetLastError());
 		return false;
+	}
 
 	DWORD unused;
 	// Required to read from layer 1 of Dual layer DVDs
@@ -123,8 +117,8 @@ bool IOCtlSrc::ReadSectors2048(u32 sector, u32 count, u8* buffer) const
 
 	if (!SetFilePointerEx(m_device, offset, nullptr, FILE_BEGIN))
 	{
-		fprintf(stderr, " * CDVD SetFilePointerEx failed: sector %u: error %u\n",
-				sector, GetLastError());
+		Console.Error(fmt::format(" * CDVD SetFilePointerEx failed: sector {}: error {}",
+				sector, GetLastError()));
 		return false;
 	}
 
@@ -134,13 +128,13 @@ bool IOCtlSrc::ReadSectors2048(u32 sector, u32 count, u8* buffer) const
 	{
 		if (bytes_read == bytes_to_read)
 			return true;
-		fprintf(stderr, " * CDVD ReadFile: sectors %u-%u: %u bytes read, %u bytes expected\n",
-				sector, sector + count - 1, bytes_read, bytes_to_read);
+		Console.Error(fmt::format(" * CDVD ReadFile: sectors {}-{}: {} bytes read, {} bytes expected",
+				sector, sector + count - 1, bytes_read, bytes_to_read));
 	}
 	else
 	{
-		fprintf(stderr, " * CDVD ReadFile failed: sectors %u-%u: error %u\n",
-				sector, sector + count - 1, GetLastError());
+		Console.Error(fmt::format(" * CDVD ReadFile failed: sectors {}-{}: error {}",
+				sector, sector + count - 1, GetLastError()));
 	}
 
 	return false;
@@ -212,14 +206,14 @@ bool IOCtlSrc::ReadDVDInfo()
 	// least 18 bytes of the layer descriptor or else the ioctl will fail. The
 	// media specific information seems to be empty, so there's no point reading
 	// any more than that.
-	
+
 	// UPDATE 15 Jan 2021
 	// Okay so some drives seem to have descriptors BIGGER than 22 bytes!
 	// This causes the read to fail with INVALID_PARAMETER.
 	// So lets just give it 32 bytes to play with, it seems happy enough with that.
 	// Refraction
 	std::array<u8, 32> buffer;
-	DVD_READ_STRUCTURE dvdrs{{0}, DvdPhysicalDescriptor, 0, 0};
+	DVD_READ_STRUCTURE dvdrs{{}, DvdPhysicalDescriptor, 0, 0};
 
 	if (!DeviceIoControl(m_device, IOCTL_DVD_READ_STRUCTURE, &dvdrs, sizeof(dvdrs),
 						 buffer.data(), buffer.size(), &unused, nullptr))
@@ -310,6 +304,29 @@ bool IOCtlSrc::ReadCDInfo()
 	return true;
 }
 
+bool IOCtlSrc::ReadTrackSubQ(cdvdSubQ* subQ) const
+{
+	CDROM_SUB_Q_DATA_FORMAT format;
+	SUB_Q_CHANNEL_DATA osSubQ{};
+	DWORD unused;
+
+	format.Format = IOCTL_CDROM_CURRENT_POSITION;
+
+	if (!DeviceIoControl(m_device, IOCTL_CDROM_READ_Q_CHANNEL, &format, sizeof(format), &osSubQ, sizeof(osSubQ), &unused, nullptr))
+	{
+		Console.Error("SUB CHANNEL READ ERROR: %d\n", errno);
+		return false;
+	}
+	else
+	{
+		subQ->adr = osSubQ.CurrentPosition.ADR;
+		subQ->trackNum = osSubQ.CurrentPosition.TrackNumber;
+		subQ->trackIndex = osSubQ.CurrentPosition.IndexNumber;
+	}
+
+	return true;
+}
+
 bool IOCtlSrc::DiscReady()
 {
 	if (m_device == INVALID_HANDLE_VALUE)
@@ -320,7 +337,7 @@ bool IOCtlSrc::DiscReady()
 						nullptr, 0, &unused, nullptr))
 	{
 		if (!m_sectors)
-			Reopen();
+			Reopen(nullptr);
 	}
 	else
 	{

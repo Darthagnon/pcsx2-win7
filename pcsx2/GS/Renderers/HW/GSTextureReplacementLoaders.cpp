@@ -1,21 +1,8 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
-
-#include "common/Align.h"
+#include "common/BitUtils.h"
+#include "common/Console.h"
 #include "common/FileSystem.h"
 #include "common/Path.h"
 #include "common/StringUtil.h"
@@ -41,7 +28,7 @@ static constexpr LoaderDefinition s_loaders[] = {
 };
 
 
-GSTextureReplacements::ReplacementTextureLoader GSTextureReplacements::GetLoader(const std::string_view& filename)
+GSTextureReplacements::ReplacementTextureLoader GSTextureReplacements::GetLoader(const std::string_view filename)
 {
 	const std::string_view extension(Path::GetExtension(filename));
 	if (extension.empty())
@@ -68,7 +55,7 @@ static u32 GetBlockCount(u32 extent, u32 block_size)
 static void CalcBlockMipmapSize(u32 block_size, u32 bytes_per_block, u32 base_width, u32 base_height, u32 mip, u32& width, u32& height, u32& pitch, u32& size)
 {
 	width = std::max<u32>(base_width >> mip, 1u);
-	height = std::max<u32>(base_width >> mip, 1u);
+	height = std::max<u32>(base_height >> mip, 1u);
 
 	const u32 blocks_wide = GetBlockCount(width, block_size);
 	const u32 blocks_high = GetBlockCount(height, block_size);
@@ -235,7 +222,7 @@ bool PNGLoader(const std::string& filename, GSTextureReplacements::ReplacementTe
 
 bool GSTextureReplacements::SavePNGImage(const std::string& filename, u32 width, u32 height, const u8* buffer, u32 pitch)
 {
-	const int compression = theApp.GetConfigI("png_compression_level");
+	const int compression = GSConfig.PNGCompressionLevel;
 
 	png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
 	if (!png_ptr)
@@ -635,9 +622,9 @@ bool DDSLoader(const std::string& filename, GSTextureReplacements::ReplacementTe
 		for (u32 level = 1; level <= info.mip_count; level++)
 		{
 			GSTextureReplacements::ReplacementTexture::MipData md;
-			u32 mip_width, mip_height, mip_size;
-			CalcBlockMipmapSize(info.block_size, info.bytes_per_block, info.width, info.height, level, mip_width, mip_height, md.pitch, mip_size);
-			if (!ReadDDSMipLevel(fp.get(), filename, level, info, mip_width, mip_height, md.data, md.pitch, mip_size))
+			u32 mip_size;
+			CalcBlockMipmapSize(info.block_size, info.bytes_per_block, info.width, info.height, level, md.width, md.height, md.pitch, mip_size);
+			if (!ReadDDSMipLevel(fp.get(), filename, level, info, md.width, md.height, md.data, md.pitch, mip_size))
 				break;
 
 			tex->mips.push_back(std::move(md));

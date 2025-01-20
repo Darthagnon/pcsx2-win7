@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #define _PC_	// disables MIPS opcode macros.
 
@@ -85,7 +71,7 @@ static __fi bool WriteIOPtoFifo()
 	sif0.iop.cycles += writeSize; //1 word per cycle
 	sif0.iop.counter -= writeSize;
 
-	
+
 	return true;
 }
 
@@ -95,7 +81,7 @@ static __fi bool ProcessEETag()
 	alignas(16) static u32 tag[4];
 	tDMA_TAG& ptag(*(tDMA_TAG*)tag);
 
-	sif0.fifo.read((u32*)&tag[0], 2); // Tag
+	sif0.fifo.read((u32*)&tag[0], 4); // Tag
 	SIF_LOG("SIF0 EE read tag: %x %x %x %x", tag[0], tag[1], tag[2], tag[3]);
 
 	sif0ch.unsafeTransfer(&ptag);
@@ -133,14 +119,13 @@ static __fi bool ProcessIOPTag()
 	sif0.iop.data = *(sifData *)iopPhysMem(hw_dma9.tadr);
 	sif0.iop.data.words = sif0.iop.data.words;
 
-	// send the EE's side of the DMAtag.  The tag is only 64 bits, with the upper 64 bits
-	// ignored by the EE.
+	// send the EE's side of the DMAtag.  The tag is only 64 bits, with the upper 64 bits being the next IOP tag
+	// ignored by the EE, however required for alignment and used as junk data in small packets.
+	sif0.fifo.write((u32*)iopPhysMem(hw_dma9.tadr + 8), 4);
 
-	sif0.fifo.write((u32*)iopPhysMem(hw_dma9.tadr + 8), 2);
-	//sif0.fifo.writePos = (sif0.fifo.writePos + 2) & (FIFO_SIF_W - 1);		// iggy on the upper 64.
-	//sif0.fifo.size += 2;
-
-	hw_dma9.tadr += 16; ///hw_dma9.madr + 16 + sif0.sifData.words << 2;
+	// I know we just sent 1QW, because of the size of the EE read, but only 64bits was valid
+	// so we advance by 64bits after the EE tag to get the next IOP tag.
+	hw_dma9.tadr += 16;
 
 	// We're only copying the first 24 bits.  Bits 30 and 31 (checked below) are Stop/IRQ bits.
 	hw_dma9.madr = sif0data & 0xFFFFFF;
@@ -148,7 +133,9 @@ static __fi bool ProcessIOPTag()
 	//Maximum transfer amount 1mb-16 also masking out top part which is a "Mode" cache stuff, we don't care :)
 	sif0.iop.counter = sif0words & 0xFFFFF;
 
+	// Save the number of words we need to write to make up 1QW from this packet. (See "Junk data writing" in Sif.h)
 	sif0.iop.writeJunk = (sif0.iop.counter & 0x3) ? (4 - sif0.iop.counter & 0x3) : 0;
+
 	// IOP tags have an IRQ bit and an End of Transfer bit:
 	if (sif0tag.IRQ  || (sif0tag.ID & 4)) sif0.iop.end = true;
 	SIF_LOG("SIF0 IOP Tag: madr=%lx, tadr=%lx, counter=%lx (%08X_%08X) Junk %d", hw_dma9.madr, hw_dma9.tadr, sif0.iop.counter, sif0words, sif0data, sif0.iop.writeJunk);
@@ -167,7 +154,7 @@ static __fi void EndEE()
 		SIF_LOG("SIF0 EE: cycles = 0");
 		sif0.ee.cycles = 1;
 	}
-
+	CPU_SET_DMASTALL(DMAC_SIF0, false);
 	CPU_INT(DMAC_SIF0, sif0.ee.cycles*BIAS);
 }
 
@@ -366,17 +353,18 @@ __fi void dmaSIF0()
 	psHu32(SBUS_F240) |= 0x2000;
 	sif0.ee.busy = true;
 
-	// Okay, this here is needed currently (r3644). 
+	// Okay, this here is needed currently (r3644).
 	// FFX battles in the thunder plains map die otherwise, Phantasy Star 4 as well
 	// These 2 games could be made playable again by increasing the time the EE or the IOP run,
 	// showing that this is very timing sensible.
 	// Doing this DMA unfortunately brings back an old warning in Legend of Legaia though, but it still works.
 
-	//Updated 23/08/2011: The hangs are caused by the EE suspending SIF1 DMA and restarting it when in the middle 
+	//Updated 23/08/2011: The hangs are caused by the EE suspending SIF1 DMA and restarting it when in the middle
 	//of processing a "REFE" tag, so the hangs can be solved by forcing the ee.end to be false
 	// (as it should always be at the beginning of a DMA).  using "if iop is busy" flags breaks Tom Clancy Rainbow Six.
 	// Legend of Legaia doesn't throw a warning either :)
 	sif0.ee.end = false;
+	CPU_SET_DMASTALL(DMAC_SIF0, false);
 	SIF0Dma();
 
 }

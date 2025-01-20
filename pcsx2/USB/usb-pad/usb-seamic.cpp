@@ -1,24 +1,13 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
-#include "padproxy.h"
-#include "usb-pad.h"
+#include "Host.h"
+#include "USB/usb-pad/usb-pad.h"
 #include "USB/qemu-usb/desc.h"
-#include "USB/usb-mic/usb-mic-singstar.h"
-#include "USB/shared/inifile_usb.h"
+#include "USB/usb-mic/usb-mic.h"
+#include "USB/USB.h"
+
+#include "common/Console.h"
 
 namespace usb_pad
 {
@@ -234,53 +223,34 @@ namespace usb_pad
 		// 134 bytes
 	};
 
-	std::list<std::string> SeamicDevice::ListAPIs()
+	struct SeamicState : public PadState
 	{
-		return RegisterPad::instance().Names();
-	}
+		explicit SeamicState(u32 port);
 
-	const TCHAR* SeamicDevice::LongAPIName(const std::string& name)
-	{
-		auto proxy = RegisterPad::instance().Proxy(name);
-		if (proxy)
-			return proxy->Name();
-		return nullptr;
-	}
-
-	typedef struct SeamicState
-	{
-		USBDevice dev;
-		USBDesc desc;
-		USBDescDevice desc_dev;
 		USBDevice* mic;
-		Pad* pad;
-		uint8_t port;
-		struct freeze
-		{
-			int nothing;
-		} f;
-	} SeamicState;
+	};
+
+	SeamicState::SeamicState(u32 port) : PadState(port, WT_SEGA_SEAMIC) {}
 
 	static void pad_handle_data(USBDevice* dev, USBPacket* p)
 	{
-		SeamicState* s = (SeamicState*)dev;
+		SeamicState* s = USB_CONTAINER_OF(dev, SeamicState, dev);
 		uint8_t data[64];
 
-		int ret = 0;
 		uint8_t devep = p->ep->nr;
 
 		switch (p->pid)
 		{
 			case USB_TOKEN_IN:
-				if (devep == 1 && s->mic)
+				if (devep == 1)
 				{
 					s->mic->klass.handle_data(s->mic, p);
 				}
-				else if (devep == 2 && s->pad)
+				else if (devep == 2)
 				{
-					ret = s->pad->TokenIn(data, p->iov.size);
+					const int ret = s->TokenIn(data, p->buffer_size);
 					if (ret > 0)
-						usb_packet_copy(p, data, MIN((unsigned long)ret, sizeof(data)));
+						usb_packet_copy(p, data, std::min((size_t)ret, sizeof(data)));
 					else
 						p->status = ret;
 				}
@@ -290,8 +260,8 @@ namespace usb_pad
 				}
 				break;
 			case USB_TOKEN_OUT:
-				usb_packet_copy(p, data, MIN(p->iov.size, sizeof(data)));
-				ret = s->pad->TokenOut(data, p->iov.size);
+				usb_packet_copy(p, data, p->buffer_size);
+				s->TokenOut(data, p->buffer_size);
 				break;
 			default:
 			fail:
@@ -302,9 +272,8 @@ namespace usb_pad
 
 	static void pad_handle_reset(USBDevice* dev)
 	{
-		/* XXX: do it */
-		SeamicState* s = (SeamicState*)dev;
-		s->pad->Reset();
+		SeamicState* s = USB_CONTAINER_OF(dev, SeamicState, dev);
+		s->Reset();
 		s->mic->klass.handle_reset(s->mic);
 		return;
 	}
@@ -327,7 +296,7 @@ namespace usb_pad
 				{
 					case USB_DT_REPORT:
 						ret = sizeof(hid_report_descriptor);
-						memcpy(data, hid_report_descriptor, ret);
+						std::memcpy(data, hid_report_descriptor, ret);
 						p->actual_length = ret;
 						break;
 					default:
@@ -339,7 +308,6 @@ namespace usb_pad
 				if (length > 0)
 				{
 					p->actual_length = 0;
-					//p->status = USB_RET_SUCCESS;
 				}
 				break;
 			case SET_IDLE:
@@ -358,73 +326,78 @@ namespace usb_pad
 
 	static void pad_handle_destroy(USBDevice* dev)
 	{
-		SeamicState* s = (SeamicState*)dev;
+		SeamicState* s = USB_CONTAINER_OF(dev, SeamicState, dev);
 		s->mic->klass.unrealize(s->mic);
-		s->mic = nullptr;
 		delete s;
 	}
 
-	static int pad_open(USBDevice* dev)
+	const char* SeamicDevice::Name() const
 	{
-		SeamicState* s = (SeamicState*)dev;
-		if (s)
-		{
-			s->mic->klass.open(s->mic);
-			return s->pad->Open();
-		}
-		return 1;
+		return TRANSLATE_NOOP("USB", "Sega Seamic");
 	}
 
-	static void pad_close(USBDevice* dev)
+	const char* SeamicDevice::TypeName() const
 	{
-		SeamicState* s = (SeamicState*)dev;
-		if (s)
-		{
-			s->mic->klass.close(s->mic);
-			s->pad->Close();
-		}
+		return "seamic";
 	}
 
-	USBDevice* SeamicDevice::CreateDevice(int port)
+	std::span<const char*> SeamicDevice::SubTypes() const
 	{
-		std::string varApi;
-#ifdef _WIN32
-		std::wstring tmp;
-		LoadSetting(nullptr, port, TypeName(), N_DEVICE_API, tmp);
-		varApi = wstr_to_str(tmp);
-#else
-		LoadSetting(nullptr, port, TypeName(), N_DEVICE_API, varApi);
-#endif
-		PadProxyBase* proxy = RegisterPad::instance().Proxy(varApi);
-		if (!proxy)
-		{
-			Console.WriteLn("USB: PAD: Invalid input API.\n");
-			return NULL;
-		}
+		return {};
+	}
 
-		std::string api;
+	std::span<const InputBindingInfo> SeamicDevice::Bindings(u32 subtype) const
+	{
+		// TODO: This is likely wrong. Someone who cares can fix it.
+		static constexpr const InputBindingInfo bindings[] = {
+			{"StickLeft", TRANSLATE_NOOP("USB", "Stick Left"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STEERING_L, GenericInputBinding::LeftStickLeft},
+			{"StickRight", TRANSLATE_NOOP("USB", "Stick Right"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STEERING_R, GenericInputBinding::LeftStickRight},
+			{"StickUp", TRANSLATE_NOOP("USB", "Stick Up"), nullptr, InputBindingInfo::Type::HalfAxis, CID_THROTTLE, GenericInputBinding::LeftStickUp},
+			{"StickDown", TRANSLATE_NOOP("USB", "Stick Down"), nullptr, InputBindingInfo::Type::HalfAxis, CID_BRAKE, GenericInputBinding::LeftStickDown},
+			{"A", TRANSLATE_NOOP("USB", "A"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON0, GenericInputBinding::Cross},
+			{"B", TRANSLATE_NOOP("USB", "B"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON1, GenericInputBinding::Circle},
+			{"C", TRANSLATE_NOOP("USB", "C"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON2, GenericInputBinding::R2},
+			{"X", TRANSLATE_NOOP("USB", "X"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON3, GenericInputBinding::Square},
+			{"Y", TRANSLATE_NOOP("USB", "Y"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON4, GenericInputBinding::Triangle},
+			{"Z", TRANSLATE_NOOP("USB", "Z"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON5, GenericInputBinding::L2},
+			{"L", TRANSLATE_NOOP("USB", "L"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON6, GenericInputBinding::L1},
+			{"R", TRANSLATE_NOOP("USB", "R"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON7, GenericInputBinding::R1},
+			{"Select", TRANSLATE_NOOP("USB", "Select"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON8, GenericInputBinding::Select},
+			{"Start", TRANSLATE_NOOP("USB", "Start"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON9, GenericInputBinding::Start},
+			{"DPadUp", TRANSLATE_NOOP("USB", "D-Pad Up"), nullptr, InputBindingInfo::Type::Button, CID_DPAD_UP, GenericInputBinding::DPadUp},
+			{"DPadDown", TRANSLATE_NOOP("USB", "D-Pad Down"), nullptr, InputBindingInfo::Type::Button, CID_DPAD_DOWN, GenericInputBinding::DPadDown},
+			{"DPadLeft", TRANSLATE_NOOP("USB", "D-Pad Left"), nullptr, InputBindingInfo::Type::Button, CID_DPAD_LEFT, GenericInputBinding::DPadLeft},
+			{"DPadRight", TRANSLATE_NOOP("USB", "D-Pad Right"), nullptr, InputBindingInfo::Type::Button, CID_DPAD_RIGHT, GenericInputBinding::DPadRight},
+		};
 
+		return bindings;
+	}
 
-#ifdef _WIN32
-		if (!LoadSetting(nullptr, port, usb_mic::SingstarDevice::TypeName(), N_DEVICE_API, tmp))
+	std::span<const SettingInfo> SeamicDevice::Settings(u32 subtype) const
+	{
+		static constexpr const SettingInfo info[] = {
+			{SettingInfo::Type::StringList, "input_device_name", TRANSLATE_NOOP("USB", "Input Device"),
+				TRANSLATE_NOOP("USB", "Selects the device to read audio from."), "", nullptr, nullptr, nullptr, nullptr,
+				nullptr, &AudioDevice::GetInputDeviceList},
+			{SettingInfo::Type::Integer, "input_latency", TRANSLATE_NOOP("USB", "Input Latency"),
+				TRANSLATE_NOOP("USB", "Specifies the latency to the host input device."),
+				AudioDevice::DEFAULT_LATENCY_STR, "1", "1000", "1", TRANSLATE_NOOP("USB", "%dms"), nullptr, nullptr, 1.0f},
+		};
+		return info;
+	}
+
+	USBDevice* SeamicDevice::CreateDevice(SettingsInterface& si, u32 port, u32 subtype) const
+	{
+		const usb_mic::MicrophoneDevice* mic_proxy =
+			static_cast<usb_mic::MicrophoneDevice*>(RegisterDevice::instance().Device(DEVTYPE_MICROPHONE));
+		if (!mic_proxy)
 			return nullptr;
-		api = wstr_to_str(tmp);	
-#else
-		if (!LoadSetting(nullptr, port, usb_mic::SingstarDevice::TypeName(), N_DEVICE_API, api))
-			return nullptr;
-#endif
 
-		USBDevice* mic = usb_mic::SingstarDevice::CreateDevice(port, api);
+		USBDevice* mic = mic_proxy->CreateDevice(si, port, 0, false, 48000, TypeName());
 		if (!mic)
 			return nullptr;
 
-		Pad* pad = proxy->CreateObject(port, TypeName());
-
-		if (!pad)
-			return NULL;
-
-		pad->Type(WT_SEGA_SEAMIC);
-		SeamicState* s = new SeamicState();
+		SeamicState* s = new SeamicState(port);
 
 		s->mic = mic;
 		s->desc.full = &s->desc_dev;
@@ -435,41 +408,31 @@ namespace usb_pad
 		if (usb_desc_parse_config(config_descriptor, sizeof(config_descriptor), s->desc_dev) < 0)
 			goto fail;
 
-		s->pad = pad;
 		s->dev.speed = USB_SPEED_FULL;
 		s->dev.klass.handle_attach = usb_desc_attach;
 		s->dev.klass.handle_reset = pad_handle_reset;
 		s->dev.klass.handle_control = pad_handle_control;
 		s->dev.klass.handle_data = pad_handle_data;
 		s->dev.klass.unrealize = pad_handle_destroy;
-		s->dev.klass.open = pad_open;
-		s->dev.klass.close = pad_close;
 		s->dev.klass.usb_desc = &s->desc;
 		s->dev.klass.product_desc = s->desc.str[2]; //not really used
 		s->port = port;
 
 		usb_desc_init(&s->dev);
 		usb_ep_init(&s->dev);
-		pad_handle_reset((USBDevice*)s);
+		pad_handle_reset(&s->dev);
 
-		return (USBDevice*)s;
+		return &s->dev;
 
 	fail:
-		pad_handle_destroy((USBDevice*)s);
+		pad_handle_destroy(&s->dev);
 		return nullptr;
 	}
 
-	int SeamicDevice::Configure(int port, const std::string& api, void* data)
+	bool SeamicDevice::Freeze(USBDevice* dev, StateWrapper& sw) const
 	{
-		auto proxy = RegisterPad::instance().Proxy(api);
-		if (proxy)
-			return proxy->Configure(port, TypeName(), data);
-		return RESULT_CANCELED;
-	}
-
-	int SeamicDevice::Freeze(FreezeAction mode, USBDevice* dev, void* data)
-	{
-		return 0;
+		Console.Warning("Not implemented!");
+		return true;
 		//  SeamicState *s = (SeamicState *)dev;
 		// 	switch (mode)
 		// 	{

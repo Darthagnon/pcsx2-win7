@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #include <chrono>
 #include <vector>
@@ -22,25 +8,25 @@
 #include "common/Threading.h"
 
 #include "PerformanceMetrics.h"
-#include "System.h"
 
 #include "GS.h"
+#include "GS/GSCapture.h"
+#include "MTGS.h"
 #include "MTVU.h"
-
-#ifdef PCSX2_CORE
 #include "VMManager.h"
-#endif
 
 static const float UPDATE_INTERVAL = 0.5f;
 
-static float s_vertical_frequency = 0.0f;
 static float s_fps = 0.0f;
 static float s_internal_fps = 0.0f;
-static float s_worst_frame_time = 0.0f;
+static float s_minimum_frame_time = 0.0f;
+static float s_minimum_frame_time_accumulator = 0.0f;
 static float s_average_frame_time = 0.0f;
 static float s_average_frame_time_accumulator = 0.0f;
-static float s_worst_frame_time_accumulator = 0.0f;
+static float s_maximum_frame_time = 0.0f;
+static float s_maximum_frame_time_accumulator = 0.0f;
 static u32 s_frames_since_last_update = 0;
+static u32 s_unskipped_frames_since_last_update = 0;
 static Common::Timer s_last_update_time;
 static Common::Timer s_last_frame_time;
 
@@ -56,6 +42,7 @@ static Threading::ThreadHandle s_cpu_thread_handle;
 static u64 s_last_cpu_time = 0;
 static u64 s_last_gs_time = 0;
 static u64 s_last_vu_time = 0;
+static u64 s_last_capture_time = 0;
 static u64 s_last_ticks = 0;
 
 static double s_cpu_thread_usage = 0.0f;
@@ -64,6 +51,11 @@ static float s_gs_thread_usage = 0.0f;
 static float s_gs_thread_time = 0.0f;
 static float s_vu_thread_usage = 0.0f;
 static float s_vu_thread_time = 0.0f;
+static float s_capture_thread_usage = 0.0f;
+static float s_capture_thread_time = 0.0f;
+
+static PerformanceMetrics::FrameTimeHistory s_frame_time_history;
+static u32 s_frame_time_history_pos = 0;
 
 struct GSSWThreadStats
 {
@@ -85,8 +77,9 @@ void PerformanceMetrics::Clear()
 
 	s_fps = 0.0f;
 	s_internal_fps = 0.0f;
-	s_worst_frame_time = 0.0f;
+	s_minimum_frame_time = 0.0f;
 	s_average_frame_time = 0.0f;
+	s_maximum_frame_time = 0.0f;
 	s_internal_fps_method = PerformanceMetrics::InternalFPSMethod::None;
 
 	s_cpu_thread_usage = 0.0f;
@@ -95,20 +88,27 @@ void PerformanceMetrics::Clear()
 	s_gs_thread_time = 0.0f;
 	s_vu_thread_usage = 0.0f;
 	s_vu_thread_time = 0.0f;
+	s_capture_thread_usage = 0.0f;
+	s_capture_thread_time = 0.0f;
 
 	s_average_gpu_time = 0.0f;
 	s_gpu_usage = 0.0f;
 
 	s_frame_number = 0;
+
+	s_frame_time_history.fill(0.0f);
+	s_frame_time_history_pos = 0;
 }
 
 void PerformanceMetrics::Reset()
 {
 	s_frames_since_last_update = 0;
+	s_unskipped_frames_since_last_update = 0;
 	s_gs_framebuffer_blits_since_last_update = 0;
 	s_gs_privileged_register_writes_since_last_update = 0;
+	s_minimum_frame_time_accumulator = 0.0f;
 	s_average_frame_time_accumulator = 0.0f;
-	s_worst_frame_time_accumulator = 0.0f;
+	s_maximum_frame_time_accumulator = 0.0f;
 
 	s_accumulated_gpu_time = 0.0f;
 	s_presents_since_last_update = 0;
@@ -117,19 +117,28 @@ void PerformanceMetrics::Reset()
 	s_last_frame_time.Reset();
 
 	s_last_cpu_time = s_cpu_thread_handle.GetCPUTime();
-	s_last_gs_time = GetMTGS().GetThreadHandle().GetCPUTime();
+	s_last_gs_time = MTGS::GetThreadHandle().GetCPUTime();
 	s_last_vu_time = THREAD_VU1 ? vu1Thread.GetThreadHandle().GetCPUTime() : 0;
 	s_last_ticks = GetCPUTicks();
+	s_last_capture_time = GSCapture::IsCapturing() ? GSCapture::GetEncoderThreadHandle().GetCPUTime() : 0;
 
 	for (GSSWThreadStats& stat : s_gs_sw_threads)
 		stat.last_cpu_time = stat.handle.GetCPUTime();
 }
 
-void PerformanceMetrics::Update(bool gs_register_write, bool fb_blit)
+void PerformanceMetrics::Update(bool gs_register_write, bool fb_blit, bool is_skipping_present)
 {
-	const float frame_time = s_last_frame_time.GetTimeMillisecondsAndReset();
-	s_average_frame_time_accumulator += frame_time;
-	s_worst_frame_time_accumulator = std::max(s_worst_frame_time_accumulator, frame_time);
+	if (!is_skipping_present)
+	{
+		const float frame_time = s_last_frame_time.GetTimeMillisecondsAndReset();
+		s_minimum_frame_time_accumulator = (s_minimum_frame_time_accumulator == 0.0f) ? frame_time : std::min(s_minimum_frame_time_accumulator, frame_time);
+		s_average_frame_time_accumulator += frame_time;
+		s_maximum_frame_time_accumulator = std::max(s_maximum_frame_time_accumulator, frame_time);
+		s_frame_time_history[s_frame_time_history_pos] = frame_time;
+		s_frame_time_history_pos = (s_frame_time_history_pos + 1) % NUM_FRAME_TIME_SAMPLES;
+		s_unskipped_frames_since_last_update++;
+	}
+
 	s_frames_since_last_update++;
 	s_gs_privileged_register_writes_since_last_update += static_cast<u32>(gs_register_write);
 	s_gs_framebuffer_blits_since_last_update += static_cast<u32>(fb_blit);
@@ -142,12 +151,11 @@ void PerformanceMetrics::Update(bool gs_register_write, bool fb_blit)
 		return;
 
 	s_last_update_time.ResetTo(now_ticks);
-	s_worst_frame_time = s_worst_frame_time_accumulator;
-	s_worst_frame_time_accumulator = 0.0f;
-	s_average_frame_time = s_average_frame_time_accumulator / static_cast<float>(s_frames_since_last_update);
-	s_average_frame_time_accumulator = 0.0f;
+	s_minimum_frame_time = std::exchange(s_minimum_frame_time_accumulator, 0.0f);
+	s_average_frame_time = std::exchange(s_average_frame_time_accumulator, 0.0f) / static_cast<float>(s_unskipped_frames_since_last_update);
+	s_maximum_frame_time = std::exchange(s_maximum_frame_time_accumulator, 0.0f);
 	s_fps = static_cast<float>(s_frames_since_last_update) / time;
-	s_average_gpu_time = s_accumulated_gpu_time / static_cast<float>(s_frames_since_last_update);
+	s_average_gpu_time = s_accumulated_gpu_time / static_cast<float>(s_unskipped_frames_since_last_update);
 	s_gpu_usage = s_accumulated_gpu_time / (time * 10.0f);
 	s_accumulated_gpu_time = 0.0f;
 
@@ -182,22 +190,27 @@ void PerformanceMetrics::Update(bool gs_register_write, bool fb_blit)
 								(1.0 / static_cast<double>(s_frames_since_last_update));
 
 	const u64 cpu_time = s_cpu_thread_handle.GetCPUTime();
-	const u64 gs_time = GetMTGS().GetThreadHandle().GetCPUTime();
+	const u64 gs_time = MTGS::GetThreadHandle().GetCPUTime();
 	const u64 vu_time = THREAD_VU1 ? vu1Thread.GetThreadHandle().GetCPUTime() : 0;
+	const u64 capture_time = GSCapture::IsCapturing() ? GSCapture::GetEncoderThreadHandle().GetCPUTime() : 0;
 
 	const u64 cpu_delta = cpu_time - s_last_cpu_time;
 	const u64 gs_delta = gs_time - s_last_gs_time;
 	const u64 vu_delta = vu_time - s_last_vu_time;
+	const u64 capture_delta = capture_time - s_last_capture_time;
 	s_last_cpu_time = cpu_time;
 	s_last_gs_time = gs_time;
 	s_last_vu_time = vu_time;
+	s_last_capture_time = capture_time;
 
 	s_cpu_thread_usage = static_cast<double>(cpu_delta) * pct_divider;
 	s_gs_thread_usage = static_cast<double>(gs_delta) * pct_divider;
 	s_vu_thread_usage = static_cast<double>(vu_delta) * pct_divider;
+	s_capture_thread_usage = static_cast<double>(capture_delta) * pct_divider;
 	s_cpu_thread_time = static_cast<double>(cpu_delta) * time_divider;
 	s_gs_thread_time = static_cast<double>(gs_delta) * time_divider;
 	s_vu_thread_time = static_cast<double>(vu_delta) * time_divider;
+	s_capture_thread_time = static_cast<double>(capture_delta) * time_divider;
 
 	for (GSSWThreadStats& thread : s_gs_sw_threads)
 	{
@@ -209,11 +222,10 @@ void PerformanceMetrics::Update(bool gs_register_write, bool fb_blit)
 	}
 
 	s_frames_since_last_update = 0;
+	s_unskipped_frames_since_last_update = 0;
 	s_presents_since_last_update = 0;
 
-#ifdef PCSX2_CORE
 	Host::OnPerformanceMetricsUpdated();
-#endif
 }
 
 void PerformanceMetrics::OnGPUPresent(float gpu_time)
@@ -238,11 +250,6 @@ void PerformanceMetrics::SetGSSWThread(u32 index, Threading::ThreadHandle thread
 {
 	s_gs_sw_threads[index].last_cpu_time = thread ? thread.GetCPUTime() : 0;
 	s_gs_sw_threads[index].handle = std::move(thread);
-}
-
-void PerformanceMetrics::SetVerticalFrequency(float rate)
-{
-	s_vertical_frequency = rate;
 }
 
 u64 PerformanceMetrics::GetFrameNumber()
@@ -272,7 +279,7 @@ float PerformanceMetrics::GetInternalFPS()
 
 float PerformanceMetrics::GetSpeed()
 {
-	return (s_fps / s_vertical_frequency) * 100.0;
+	return (s_fps / VMManager::GetFrameRate()) * 100.0;
 }
 
 float PerformanceMetrics::GetAverageFrameTime()
@@ -280,9 +287,14 @@ float PerformanceMetrics::GetAverageFrameTime()
 	return s_average_frame_time;
 }
 
-float PerformanceMetrics::GetWorstFrameTime()
+float PerformanceMetrics::GetMinimumFrameTime()
 {
-	return s_worst_frame_time;
+	return s_minimum_frame_time;
+}
+
+float PerformanceMetrics::GetMaximumFrameTime()
+{
+	return s_maximum_frame_time;
 }
 
 double PerformanceMetrics::GetCPUThreadUsage()
@@ -315,6 +327,16 @@ float PerformanceMetrics::GetVUThreadAverageTime()
 	return s_vu_thread_time;
 }
 
+float PerformanceMetrics::GetCaptureThreadUsage()
+{
+	return s_capture_thread_usage;
+}
+
+float PerformanceMetrics::GetCaptureThreadAverageTime()
+{
+	return s_capture_thread_time;
+}
+
 u32 PerformanceMetrics::GetGSSWThreadCount()
 {
 	return static_cast<u32>(s_gs_sw_threads.size());
@@ -338,4 +360,14 @@ float PerformanceMetrics::GetGPUUsage()
 float PerformanceMetrics::GetGPUAverageTime()
 {
 	return s_average_gpu_time;
+}
+
+const PerformanceMetrics::FrameTimeHistory& PerformanceMetrics::GetFrameTimeHistory()
+{
+	return s_frame_time_history;
+}
+
+u32 PerformanceMetrics::GetFrameTimeHistoryPos()
+{
+	return s_frame_time_history_pos;
 }

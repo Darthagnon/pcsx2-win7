@@ -1,27 +1,20 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
+#include "common/WindowInfo.h"
+
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QMainWindow>
+#include <QtWidgets/QMenu>
 #include <functional>
 #include <optional>
 
-#include "Settings/ControllerSettingsDialog.h"
-#include "Settings/SettingsDialog.h"
+#include "Tools/InputRecording/InputRecordingViewer.h"
+#include "Settings/ControllerSettingsWindow.h"
+#include "Settings/SettingsWindow.h"
+#include "Debugger/DebuggerWindow.h"
 #include "ui_MainWindow.h"
 
 class QProgressBar;
@@ -30,14 +23,21 @@ class AutoUpdaterDialog;
 class DisplayWidget;
 class DisplayContainer;
 class GameListWidget;
-class ControllerSettingsDialog;
+class ControllerSettingsWindow;
 
 class EmuThread;
+
+namespace Achievements
+{
+	enum class LoginRequestReason;
+}
 
 namespace GameList
 {
 	struct Entry;
 }
+
+enum class CDVD_SourceType : uint8_t;
 
 class MainWindow final : public QMainWindow
 {
@@ -54,6 +54,9 @@ public:
 		VMLock(const VMLock&) = delete;
 		~VMLock();
 
+		VMLock& operator=(VMLock&& lock);
+		VMLock& operator=(const VMLock&) = delete;
+
 		/// Returns the parent widget, which can be used for any popup dialogs.
 		__fi QWidget* getDialogParent() const { return m_dialog_parent; }
 
@@ -62,7 +65,7 @@ public:
 		void cancelResume();
 
 	private:
-		VMLock(QWidget* dialog_parent, bool was_paused, bool was_fullscreen);
+		VMLock(QWidget* dialog_parent, bool was_paused, bool was_exclusive_fullscreen);
 		friend MainWindow;
 
 		QWidget* m_dialog_parent;
@@ -70,38 +73,60 @@ public:
 		bool m_was_fullscreen;
 	};
 
-	/// Default theme name for the platform.
-	static const char* DEFAULT_THEME_NAME;
+	/// Default filter for opening a file.
+	static const char* OPEN_FILE_FILTER;
+
+	/// Default filter for opening a disc image.
+	static const char* DISC_IMAGE_FILTER;
 
 public:
-	explicit MainWindow(const QString& unthemed_style_name);
+	MainWindow();
 	~MainWindow();
 
 	void initialize();
 	void connectVMThreadSignals(EmuThread* thread);
 	void startupUpdateCheck();
+	void resetSettings(bool ui);
+	void quit();
 
 	/// Locks the VM by pausing it, while a popup dialog is displayed.
 	VMLock pauseAndLockVM();
 
+	/// Accessors for the status bar widgets, updated by the emulation thread.
+	__fi QLabel* getStatusVerboseWidget() const { return m_status_verbose_widget; }
+	__fi QLabel* getStatusRendererWidget() const { return m_status_renderer_widget; }
+	__fi QLabel* getStatusResolutionWidget() const { return m_status_resolution_widget; }
+	__fi QLabel* getStatusFPSWidget() const { return m_status_fps_widget; }
+	__fi QLabel* getStatusVPSWidget() const { return m_status_vps_widget; }
+	__fi QLabel* getStatusSpeedWidget() const { return m_status_speed_widget; }
+
+	/// Rescans a single file. NOTE: Happens on UI thread.
+	void rescanFile(const std::string& path);
+
+	void openDebugger();
+
 public Q_SLOTS:
-	void checkForUpdates(bool display_message);
+	void checkForUpdates(bool display_message, bool force_check);
 	void refreshGameList(bool invalidate_cache);
 	void cancelGameListRefresh();
-	void invalidateSaveStateCache();
 	void reportError(const QString& title, const QString& message);
+	bool confirmMessage(const QString& title, const QString& message);
+	void onStatusMessage(const QString& message);
+
 	void runOnUIThread(const std::function<void()>& func);
-	bool requestShutdown(bool allow_confirm = true, bool allow_save_to_state = true, bool block_until_done = false);
-	void requestExit();
+	void requestReset();
+	bool requestShutdown(bool allow_confirm = true, bool allow_save_to_state = true, bool default_save_to_state = true);
+	void requestExit(bool allow_confirm = true);
 	void checkForSettingChanges();
+	std::optional<WindowInfo> getWindowInfo();
 
 private Q_SLOTS:
 	void onUpdateCheckComplete();
 
-	DisplayWidget* createDisplay(bool fullscreen, bool render_to_main);
-	DisplayWidget* updateDisplay(bool fullscreen, bool render_to_main, bool surfaceless);
+	std::optional<WindowInfo> acquireRenderWindow(bool recreate_window, bool fullscreen, bool render_to_main, bool surfaceless);
 	void displayResizeRequested(qint32 width, qint32 height);
-	void destroyDisplay();
+	void mouseModeRequested(bool relative_mode, bool hide_cursor);
+	void releaseRenderWindow();
 	void focusDisplayWidget();
 
 	void onGameListRefreshComplete();
@@ -111,14 +136,18 @@ private Q_SLOTS:
 	void onGameListEntryContextMenuRequested(const QPoint& point);
 
 	void onStartFileActionTriggered();
+	void onStartDiscActionTriggered();
 	void onStartBIOSActionTriggered();
 	void onChangeDiscFromFileActionTriggered();
 	void onChangeDiscFromGameListActionTriggered();
 	void onChangeDiscFromDeviceActionTriggered();
+	void onRemoveDiscActionTriggered();
 	void onChangeDiscMenuAboutToShow();
 	void onChangeDiscMenuAboutToHide();
 	void onLoadStateMenuAboutToShow();
 	void onSaveStateMenuAboutToShow();
+	void onStartFullscreenUITriggered();
+	void onFullscreenUIStateChange(bool running);
 	void onViewToolbarActionToggled(bool checked);
 	void onViewLockToolbarActionToggled(bool checked);
 	void onViewStatusBarActionToggled(bool checked);
@@ -130,20 +159,27 @@ private Q_SLOTS:
 	void onSupportForumsActionTriggered();
 	void onDiscordServerActionTriggered();
 	void onAboutActionTriggered();
-	void onCheckForUpdatesActionTriggered();
 	void onToolsOpenDataDirectoryTriggered();
+	void onToolsCoverDownloaderTriggered();
+	void onToolsEditCheatsPatchesTriggered(bool cheats);
+	void onCreateMemoryCardOpenRequested();
+	void updateTheme();
+	void reloadThemeSpecificImages();
+	void updateLanguage();
 	void onThemeChanged();
-	void onThemeChangedFromSettings();
-	void onLoggingOptionChanged();
+	void onLanguageChanged();
 	void onScreenshotActionTriggered();
 	void onSaveGSDumpActionTriggered();
 	void onBlockDumpActionToggled(bool checked);
+	void onShowAdvancedSettingsToggled(bool checked);
+	void onVideoCaptureToggled(bool checked);
+	void onSettingsTriggeredFromToolbar();
 
 	// Input Recording
 	void onInputRecNewActionTriggered();
 	void onInputRecPlayActionTriggered();
 	void onInputRecStopActionTriggered();
-	void onInputRecOpenSettingsTriggered();
+	void onInputRecOpenViewer();
 
 	void onVMStarting();
 	void onVMStarted();
@@ -151,34 +187,49 @@ private Q_SLOTS:
 	void onVMResumed();
 	void onVMStopped();
 
-	void onGameChanged(const QString& path, const QString& serial, const QString& name, quint32 crc);
-	void onPerformanceMetricsUpdated(const QString& fps_stat, const QString& gs_stat);
+	void onGameChanged(const QString& title, const QString& elf_override, const QString& disc_path,
+		const QString& serial, quint32 disc_crc, quint32 crc);
 
-	void recreate();
+	void onCaptureStarted(const QString& filename);
+	void onCaptureStopped();
+
+	void onAchievementsLoginRequested(Achievements::LoginRequestReason reason);
+	void onAchievementsHardcoreModeChanged(bool enabled);
 
 protected:
 	void showEvent(QShowEvent* event) override;
 	void closeEvent(QCloseEvent* event) override;
+	void changeEvent(QEvent* event) override;
 	void dragEnterEvent(QDragEnterEvent* event) override;
 	void dropEvent(QDropEvent* event) override;
+	void moveEvent(QMoveEvent* event) override;
+	void resizeEvent(QResizeEvent* event) override;
+
+#ifdef _WIN32
+	bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
+#endif
 
 private:
-	enum : s32
-	{
-		NUM_SAVE_STATE_SLOTS = 10,
-	};
-
 	void setupAdditionalUi();
 	void connectSignals();
-	void setStyleFromSettings();
-	void setIconThemeFromStyle();
+	void createRendererSwitchMenu();
+	void recreate();
+	void recreateSettings();
+	void destroySubWindows();
+
+	void registerForDeviceNotifications();
+	void unregisterForDeviceNotifications();
 
 	void saveStateToConfig();
 	void restoreStateFromConfig();
 
-	void updateEmulationActions(bool starting, bool running);
+	void updateEmulationActions(bool starting, bool running, bool stopping);
+	void updateDisplayRelatedActions(bool has_surface, bool render_to_main, bool fullscreen);
+	void updateGameDependentActions();
 	void updateStatusBarWidgetVisibility();
+	void updateAdvancedSettingsVisibility();
 	void updateWindowTitle();
+	void updateWindowState(bool force_visible = false);
 	void setProgressBar(int current, int total);
 	void clearProgressBar();
 
@@ -186,61 +237,82 @@ private:
 	bool isRenderingFullscreen() const;
 	bool isRenderingToMain() const;
 	bool shouldHideMouseCursor() const;
+	bool shouldHideMainWindow() const;
 	void switchToGameListView();
 	void switchToEmulationView();
 
+	bool shouldAbortForMemcardBusy(const VMLock& lock);
+
+	QWidget* getContentParent();
 	QWidget* getDisplayContainer() const;
 	void saveDisplayWindowGeometryToConfig();
 	void restoreDisplayWindowGeometryFromConfig();
-	void destroyDisplayWidget();
-	void setDisplayFullscreen(const std::string& fullscreen_mode);
+	void createDisplayWidget(bool fullscreen, bool render_to_main);
+	void destroyDisplayWidget(bool show_game_list);
+	void updateDisplayWidgetCursor();
 
-	SettingsDialog* getSettingsDialog();
+	SettingsWindow* getSettingsWindow();
 	void doSettings(const char* category = nullptr);
 
-	ControllerSettingsDialog* getControllerSettingsDialog();
-	void doControllerSettings(ControllerSettingsDialog::Category category = ControllerSettingsDialog::Category::Count);
+	InputRecordingViewer* getInputRecordingViewer();
+	void updateInputRecordingActions(bool started);
 
-	void startGameListEntry(const GameList::Entry* entry, std::optional<s32> save_slot = std::nullopt,
-		std::optional<bool> fast_boot = std::nullopt);
+	DebuggerWindow* getDebuggerWindow();
+
+	void doControllerSettings(ControllerSettingsWindow::Category category = ControllerSettingsWindow::Category::Count);
+
+	QString getDiscDevicePath(const QString& title);
+
+	void startGameListEntry(
+		const GameList::Entry* entry, std::optional<s32> save_slot = std::nullopt, std::optional<bool> fast_boot = std::nullopt);
 	void setGameListEntryCoverImage(const GameList::Entry* entry);
+	void clearGameListEntryPlayTime(const GameList::Entry* entry);
+	void goToWikiPage(const GameList::Entry* entry);
 
 	std::optional<bool> promptForResumeState(const QString& save_state_path);
 	void loadSaveStateSlot(s32 slot);
 	void loadSaveStateFile(const QString& filename, const QString& state_filename);
 	void populateLoadStateMenu(QMenu* menu, const QString& filename, const QString& serial, quint32 crc);
 	void populateSaveStateMenu(QMenu* menu, const QString& serial, quint32 crc);
-	void updateSaveStateMenus(const QString& filename, const QString& serial, quint32 crc);
-	void doStartDisc(const QString& path);
-	void doDiscChange(const QString& path);
+	void doStartFile(std::optional<CDVD_SourceType> source, const QString& path);
+	void doDiscChange(CDVD_SourceType source, const QString& path);
 
 	Ui::MainWindow m_ui;
-
-	QString m_unthemed_style_name;
 
 	GameListWidget* m_game_list_widget = nullptr;
 	DisplayWidget* m_display_widget = nullptr;
 	DisplayContainer* m_display_container = nullptr;
 
-	SettingsDialog* m_settings_dialog = nullptr;
-	ControllerSettingsDialog* m_controller_settings_dialog = nullptr;
+	SettingsWindow* m_settings_window = nullptr;
+	ControllerSettingsWindow* m_controller_settings_window = nullptr;
+	InputRecordingViewer* m_input_recording_viewer = nullptr;
 	AutoUpdaterDialog* m_auto_updater_dialog = nullptr;
 
-	QProgressBar* m_status_progress_widget = nullptr;
-	QLabel* m_status_gs_widget = nullptr;
-	QLabel* m_status_fps_widget = nullptr;
+	DebuggerWindow* m_debugger_window = nullptr;
 
-	QString m_current_disc_path;
-	QString m_current_game_serial;
-	QString m_current_game_name;
-	quint32 m_current_game_crc;
-	bool m_vm_valid = false;
-	bool m_vm_paused = false;
-	bool m_save_states_invalidated = false;
+	QProgressBar* m_status_progress_widget = nullptr;
+	QLabel* m_status_verbose_widget = nullptr;
+	QLabel* m_status_renderer_widget = nullptr;
+	QLabel* m_status_fps_widget = nullptr;
+	QLabel* m_status_vps_widget = nullptr;
+	QLabel* m_status_speed_widget = nullptr;
+	QLabel* m_status_resolution_widget = nullptr;
+
+	QMenu* m_settings_toolbar_menu = nullptr;
+
+	bool m_display_created = false;
+	bool m_relative_mouse_mode = false;
+	bool m_hide_mouse_cursor = false;
 	bool m_was_paused_on_surface_loss = false;
 	bool m_was_disc_change_request = false;
+	bool m_is_closing = false;
+	bool m_is_temporarily_windowed = false;
 
 	QString m_last_fps_status;
+
+#ifdef _WIN32
+	void* m_device_notification_handle = nullptr;
+#endif
 };
 
 extern MainWindow* g_main_window;

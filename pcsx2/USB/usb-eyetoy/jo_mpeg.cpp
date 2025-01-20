@@ -22,15 +22,14 @@
  * 	Movie players *should* support it as the spec allows it, but ...
  *
  * 	MPEG-1/2 currently has no active patents as far as I am aware.
- * 	
+ *
  *	http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html
  *	http://www.cs.cornell.edu/dali/api/mpegvideo-c.html
  * */
 
-#include "PrecompiledHeader.h"
-#include <stdio.h>
-#include <math.h>
-#include <memory.h>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
 
 #include "jo_mpeg.h"
 
@@ -148,7 +147,7 @@ static int jo_processDU(jo_bits_t *bits, float A[64], const unsigned char htdc[9
 	for(; (endpos>0)&&(Q[endpos]==0); --endpos) { /* do nothing */ }
 	for(int i = 1; i <= endpos;) {
 		int run = 0;
-		while (Q[i]==0 && i<endpos) {
+		while (i < endpos && Q[i] == 0) {
 			++run;
 			++i;
 		}

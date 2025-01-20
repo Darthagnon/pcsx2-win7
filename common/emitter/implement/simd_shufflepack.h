@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -184,17 +172,6 @@ namespace x86Emitter
 	};
 
 
-	struct xImplSimd_InsertExtractHelper
-	{
-		u16 Opcode;
-
-		// [SSE-4.1] Allowed with SSE registers only (MMX regs are invalid)
-		void operator()(const xRegisterSSE& to, const xRegister32& from, u8 imm8) const;
-
-		// [SSE-4.1] Allowed with SSE registers only (MMX regs are invalid)
-		void operator()(const xRegisterSSE& to, const xIndirectVoid& from, u8 imm8) const;
-	};
-
 	// --------------------------------------------------------------------------------------
 	//  SimdImpl_PInsert
 	// --------------------------------------------------------------------------------------
@@ -202,16 +179,18 @@ namespace x86Emitter
 	//
 	struct xImplSimd_PInsert
 	{
+		void B(const xRegisterSSE& to, const xRegister32& from, u8 imm8) const;
+		void B(const xRegisterSSE& to, const xIndirect32& from, u8 imm8) const;
+
 		void W(const xRegisterSSE& to, const xRegister32& from, u8 imm8) const;
-		void W(const xRegisterSSE& to, const xIndirectVoid& from, u8 imm8) const;
+		void W(const xRegisterSSE& to, const xIndirect32& from, u8 imm8) const;
 
-		// [SSE-4.1] Allowed with SSE registers only (MMX regs are invalid)
-		xImplSimd_InsertExtractHelper B;
+		void D(const xRegisterSSE& to, const xRegister32& from, u8 imm8) const;
+		void D(const xRegisterSSE& to, const xIndirect32& from, u8 imm8) const;
 
-		// [SSE-4.1] Allowed with SSE registers only (MMX regs are invalid)
-		xImplSimd_InsertExtractHelper D;
+		void Q(const xRegisterSSE& to, const xRegister64& from, u8 imm8) const;
+		void Q(const xRegisterSSE& to, const xIndirect64& from, u8 imm8) const;
 	};
-
 
 	//////////////////////////////////////////////////////////////////////////////////////////
 	// PEXTRW/B/D [all but Word form are SSE4.1 only!]
@@ -220,6 +199,12 @@ namespace x86Emitter
 	//
 	struct SimdImpl_PExtract
 	{
+		// [SSE-4.1] Copies the byte element specified by imm8 from src to dest.  The upper bits
+		// of dest are zero-extended (cleared).  This can be used to extract any single packed
+		// byte value from src into an x86 32 bit register.
+		void B(const xRegister32& to, const xRegisterSSE& from, u8 imm8) const;
+		void B(const xIndirect32& dest, const xRegisterSSE& from, u8 imm8) const;
+
 		// Copies the word element specified by imm8 from src to dest.  The upper bits
 		// of dest are zero-extended (cleared).  This can be used to extract any single packed
 		// word value from src into an x86 32 bit register.
@@ -227,15 +212,15 @@ namespace x86Emitter
 		// [SSE-4.1] Note: Indirect memory forms of this instruction are an SSE-4.1 extension!
 		//
 		void W(const xRegister32& to, const xRegisterSSE& from, u8 imm8) const;
-		void W(const xIndirectVoid& dest, const xRegisterSSE& from, u8 imm8) const;
-
-		// [SSE-4.1] Copies the byte element specified by imm8 from src to dest.  The upper bits
-		// of dest are zero-extended (cleared).  This can be used to extract any single packed
-		// byte value from src into an x86 32 bit register.
-		const xImplSimd_InsertExtractHelper B;
+		void W(const xIndirect32& dest, const xRegisterSSE& from, u8 imm8) const;
 
 		// [SSE-4.1] Copies the dword element specified by imm8 from src to dest.  This can be
 		// used to extract any single packed dword value from src into an x86 32 bit register.
-		const xImplSimd_InsertExtractHelper D;
+		void D(const xRegister32& to, const xRegisterSSE& from, u8 imm8) const;
+		void D(const xIndirect32& dest, const xRegisterSSE& from, u8 imm8) const;
+
+		// Insert a qword integer value from r/m64 into the xmm1 at the destination element specified by imm8.
+		void Q(const xRegister64& to, const xRegisterSSE& from, u8 imm8) const;
+		void Q(const xIndirect64& dest, const xRegisterSSE& from, u8 imm8) const;
 	};
 } // namespace x86Emitter

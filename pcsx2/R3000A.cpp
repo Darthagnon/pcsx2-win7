@@ -1,28 +1,13 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-
-#include "PrecompiledHeader.h"
 #include "R3000A.h"
 #include "Common.h"
 
-#include "Sio.h"
+#include "SIO/Sio0.h"
 #include "Sif.h"
 #include "DebugTools/Breakpoints.h"
 #include "R5900OpcodeTables.h"
-#include "IopSio2.h"
 #include "IopCounters.h"
 #include "IopBios.h"
 #include "IopHw.h"
@@ -38,23 +23,12 @@ R3000Acpu *psxCpu;
 u32 g_psxConstRegs[32];
 u32 g_psxHasConstReg, g_psxFlushedConstReg;
 
-// Controls when branch tests are performed.
-u32 g_iopNextEventCycle = 0;
-
-// This value is used when the IOP execution is broken to return control to the EE.
-// (which happens when the IOP throws EE-bound interrupts).  It holds the value of
-// iopCycleEE (which is set to zero to facilitate the code break), so that the unrun
-// cycles can be accounted for later.
-s32 iopBreak = 0;
-
-// tracks the IOP's current sync status with the EE.  When it dips below zero,
-// control is returned to the EE.
-s32 iopCycleEE = -1;
-
 // Used to signal to the EE when important actions that need IOP-attention have
 // happened (hsyncs, vsyncs, IOP exceptions, etc).  IOP runs code whenever this
 // is true, even if it's already running ahead a bit.
 bool iopEventAction = false;
+
+static constexpr uint iopWaitCycles = 384; // Keep inline with EE wait cycle max.
 
 bool iopEventTestIsActive = false;
 
@@ -62,15 +36,16 @@ alignas(16) psxRegisters psxRegs;
 
 void psxReset()
 {
-	memzero(psxRegs);
+	std::memset(&psxRegs, 0, sizeof(psxRegs));
 
 	psxRegs.pc = 0xbfc00000; // Start in bootstrap
-	psxRegs.CP0.n.Status = 0x10900000; // COP0 enabled | BEV = 1 | TS = 1
+	psxRegs.CP0.n.Status = 0x00400000; // BEV = 1
 	psxRegs.CP0.n.PRid   = 0x0000001f; // PRevID = Revision ID, same as the IOP R3000A
 
-	iopBreak = 0;
-	iopCycleEE = -1;
-	g_iopNextEventCycle = psxRegs.cycle + 4;
+	psxRegs.iopBreak = 0;
+	psxRegs.iopCycleEE = -1;
+	psxRegs.iopCycleEECarry = 0;
+	psxRegs.iopNextEventCycle = psxRegs.cycle + 4;
 
 	psxHwReset();
 	PSXCLK = 36864000;
@@ -124,8 +99,8 @@ __fi void psxSetNextBranch( u32 startCycle, s32 delta )
 	// typecast the conditional to signed so that things don't blow up
 	// if startCycle is greater than our next branch cycle.
 
-	if( (int)(g_iopNextEventCycle - startCycle) > delta )
-		g_iopNextEventCycle = startCycle + delta;
+	if( (int)(psxRegs.iopNextEventCycle - startCycle) > delta )
+		psxRegs.iopNextEventCycle = startCycle + delta;
 }
 
 __fi void psxSetNextBranchDelta( s32 delta )
@@ -141,6 +116,14 @@ __fi int psxTestCycle( u32 startCycle, s32 delta )
 	return (int)(psxRegs.cycle - startCycle) >= delta;
 }
 
+__fi int psxRemainingCycles(IopEventId n)
+{
+	if (psxRegs.interrupt & (1 << n))
+		return ((psxRegs.cycle - psxRegs.sCycle[n]) + psxRegs.eCycle[n]);
+	else
+		return 0;
+}
+
 __fi void PSX_INT( IopEventId n, s32 ecycle )
 {
 	// 19 is CDVD read int, it's supposed to be high.
@@ -152,15 +135,15 @@ __fi void PSX_INT( IopEventId n, s32 ecycle )
 	psxRegs.sCycle[n] = psxRegs.cycle;
 	psxRegs.eCycle[n] = ecycle;
 
-	psxSetNextBranchDelta( ecycle );
+	psxSetNextBranchDelta(ecycle);
+	const float mutiplier = static_cast<float>(PS2CLK) / static_cast<float>(PSXCLK);
+	const s32 iopDelta = (psxRegs.iopNextEventCycle - psxRegs.cycle) * mutiplier;
 
-	if( iopCycleEE < 0 )
+	if (psxRegs.iopCycleEE < iopDelta)
 	{
 		// The EE called this int, so inform it to branch as needed:
-		// fixme - this doesn't take into account EE/IOP sync (the IOP may be running
-		// ahead or behind the EE as per the EEsCycles value)
-		s32 iopDelta = (g_iopNextEventCycle-psxRegs.cycle)*8;
-		cpuSetNextEventDelta( iopDelta );
+		
+		cpuSetNextEventDelta(iopDelta - psxRegs.iopCycleEE);
 	}
 }
 
@@ -177,15 +160,32 @@ static __fi void IopTestEvent( IopEventId n, void (*callback)() )
 		psxSetNextBranch( psxRegs.sCycle[n], psxRegs.eCycle[n] );
 }
 
+static __fi void Sio0TestEvent(IopEventId n)
+{
+	if (!(psxRegs.interrupt & (1 << n)))
+	{
+		return;
+	}
+
+	if (psxTestCycle(psxRegs.sCycle[n], psxRegs.eCycle[n]))
+	{
+		psxRegs.interrupt &= ~(1 << n);
+		g_Sio0.Interrupt(Sio0Interrupt::TEST_EVENT);
+	}
+	else
+	{
+		psxSetNextBranch(psxRegs.sCycle[n], psxRegs.eCycle[n]);
+	}
+}
+
 static __fi void _psxTestInterrupts()
 {
 	IopTestEvent(IopEvt_SIF0,		sif0Interrupt);	// SIF0
 	IopTestEvent(IopEvt_SIF1,		sif1Interrupt);	// SIF1
 	IopTestEvent(IopEvt_SIF2,		sif2Interrupt);	// SIF2
-	// Originally controlled by a preprocessor define, now PSX dependent.
-	if (psxHu32(HW_ICFG) & (1 << 3)) IopTestEvent(IopEvt_SIO, sioInterruptR);
-	IopTestEvent(IopEvt_CdvdRead,	cdvdReadInterrupt);
+	Sio0TestEvent(IopEvt_SIO);
 	IopTestEvent(IopEvt_CdvdSectorReady, cdvdSectorReady);
+	IopTestEvent(IopEvt_CdvdRead,	cdvdReadInterrupt);
 
 	// Profile-guided Optimization (sorta)
 	// The following ints are rarely called.  Encasing them in a conditional
@@ -206,16 +206,19 @@ static __fi void _psxTestInterrupts()
 
 __ri void iopEventTest()
 {
-	if( psxTestCycle( psxNextsCounter, psxNextCounter ) )
+	psxRegs.iopNextEventCycle = psxRegs.cycle + iopWaitCycles;
+
+	if (psxTestCycle(psxNextStartCounter, psxNextDeltaCounter))
 	{
 		psxRcntUpdate();
 		iopEventAction = true;
 	}
 	else
 	{
-	// start the next branch at the next counter event by default
-	// the interrupt code below will assign nearer branches if needed.
-		g_iopNextEventCycle = psxNextsCounter+psxNextCounter;
+		// start the next branch at the next counter event by default
+		// the interrupt code below will assign nearer branches if needed.
+		if (psxNextDeltaCounter < static_cast<s32>(psxRegs.iopNextEventCycle - psxNextStartCounter))
+			psxRegs.iopNextEventCycle = psxNextStartCounter + psxNextDeltaCounter;
 	}
 
 	if (psxRegs.interrupt)
@@ -225,9 +228,9 @@ __ri void iopEventTest()
 		iopEventTestIsActive = false;
 	}
 
-	if( (psxHu32(0x1078) != 0) && ((psxHu32(0x1070) & psxHu32(0x1074)) != 0) )
+	if ((psxHu32(0x1078) != 0) && ((psxHu32(0x1070) & psxHu32(0x1074)) != 0))
 	{
-		if( (psxRegs.CP0.n.Status & 0xFE01) >= 0x401 )
+		if ((psxRegs.CP0.n.Status & 0xFE01) >= 0x401)
 		{
 			PSXCPU_LOG("Interrupt: %x  %x", psxHu32(0x1070), psxHu32(0x1074));
 			psxException(0, 0);

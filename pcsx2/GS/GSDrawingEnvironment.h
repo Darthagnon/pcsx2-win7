@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -35,10 +23,6 @@ public:
 	GIFRegTRXREG     TRXREG;
 	GSDrawingContext CTXT[2];
 
-	GSDrawingEnvironment()
-	{
-	}
-
 	void Reset()
 	{
 		memset(&PRIM, 0, sizeof(PRIM));
@@ -59,25 +43,9 @@ public:
 
 		CTXT[0].Reset();
 		CTXT[1].Reset();
-
-		memset(dimx, 0, sizeof(dimx));
 	}
 
-	GSVector4i dimx[8];
-
-	void UpdateDIMX()
-	{
-		dimx[1] = GSVector4i(DIMX.DM00, 0, DIMX.DM01, 0, DIMX.DM02, 0, DIMX.DM03, 0);
-		dimx[0] = dimx[1].xxzzlh();
-		dimx[3] = GSVector4i(DIMX.DM10, 0, DIMX.DM11, 0, DIMX.DM12, 0, DIMX.DM13, 0),
-		dimx[2] = dimx[3].xxzzlh();
-		dimx[5] = GSVector4i(DIMX.DM20, 0, DIMX.DM21, 0, DIMX.DM22, 0, DIMX.DM23, 0),
-		dimx[4] = dimx[5].xxzzlh();
-		dimx[7] = GSVector4i(DIMX.DM30, 0, DIMX.DM31, 0, DIMX.DM32, 0, DIMX.DM33, 0),
-		dimx[6] = dimx[7].xxzzlh();
-	}
-
-	void Dump(const std::string& filename)
+	void Dump(const std::string& filename) const
 	{
 		FILE* fp = fopen(filename.c_str(), "wt");
 		if (!fp)

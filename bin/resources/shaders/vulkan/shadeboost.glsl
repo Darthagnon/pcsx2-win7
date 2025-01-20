@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
+
 //#version 420 // Keep it for editor detection
 
 #ifdef VERTEX_SHADER

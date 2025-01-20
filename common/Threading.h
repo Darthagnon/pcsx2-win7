@@ -1,22 +1,9 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
 #include "common/Pcsx2Defs.h"
-#include "common/General.h"
 
 #if defined(__APPLE__)
 #include <mach/semaphore.h>
@@ -54,6 +41,9 @@ namespace Threading
 
 	// sleeps the current thread for the given number of milliseconds.
 	extern void Sleep(int ms);
+
+	// sleeps the current thread until the specified time point, or later.
+	extern void SleepUntil(u64 ticks);
 
 	// --------------------------------------------------------------------------------------
 	//  ThreadHandle
@@ -211,6 +201,8 @@ namespace Threading
 				m_sema.Post();
 		}
 
+		/// Checks if there's any work in the queue
+		bool CheckForWork();
 		/// Wait for work to be added to the queue
 		void WaitForWork();
 		/// Wait for work to be added to the queue, spinning for a bit before sleeping the thread
@@ -227,5 +219,36 @@ namespace Threading
 		/// Reset the semaphore to the initial state
 		/// Should be called by the worker thread if it restarts after dying
 		void Reset();
+	};
+
+	/// A semaphore that definitely has a fast userspace path
+	class UserspaceSemaphore
+	{
+		KernelSemaphore m_sema;
+		std::atomic<int32_t> m_counter{0};
+
+	public:
+		UserspaceSemaphore() = default;
+		~UserspaceSemaphore() = default;
+
+		void Post()
+		{
+			if (m_counter.fetch_add(1, std::memory_order_release) < 0)
+				m_sema.Post();
+		}
+
+		void Wait()
+		{
+			if (m_counter.fetch_sub(1, std::memory_order_acquire) <= 0)
+				m_sema.Wait();
+		}
+
+		bool TryWait()
+		{
+			int32_t counter = m_counter.load(std::memory_order_relaxed);
+			while (counter > 0 && !m_counter.compare_exchange_weak(counter, counter - 1, std::memory_order_acquire, std::memory_order_relaxed))
+				;
+			return counter > 0;
+		}
 	};
 } // namespace Threading

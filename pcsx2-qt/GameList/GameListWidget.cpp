@@ -1,32 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
-
-#include "common/Assertions.h"
-#include "common/StringUtil.h"
-
-#include "pcsx2/Frontend/GameList.h"
-#include "pcsx2/HostSettings.h"
-
-#include <QtCore/QSortFilterProxyModel>
-#include <QtGui/QPixmap>
-#include <QtGui/QWheelEvent>
-#include <QtWidgets/QApplication>
-#include <QtWidgets/QHeaderView>
-#include <QtWidgets/QMenu>
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #include "GameListModel.h"
 #include "GameListRefreshThread.h"
@@ -34,11 +7,35 @@
 #include "QtHost.h"
 #include "QtUtils.h"
 
+#include "pcsx2/GameList.h"
+#include "pcsx2/Host.h"
+
+#include "common/Assertions.h"
+#include "common/Console.h"
+#include "common/StringUtil.h"
+
+#include "fmt/format.h"
+
+#include <QtCore/QSortFilterProxyModel>
+#include <QtGui/QPainter>
+#include <QtGui/QPixmap>
+#include <QtGui/QWheelEvent>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QHeaderView>
+#include <QtWidgets/QMenu>
+#include <QtWidgets/QScrollBar>
+#include <QtWidgets/QStyledItemDelegate>
+
 static const char* SUPPORTED_FORMATS_STRING = QT_TRANSLATE_NOOP(GameListWidget,
 	".bin/.iso (ISO Disc Images)\n"
+	".mdf (Media Descriptor File)\n"
 	".chd (Compressed Hunks of Data)\n"
 	".cso (Compressed ISO)\n"
+	".zso (Compressed ISO)\n"
 	".gz (Gzip Compressed ISO)");
+
+static constexpr float MIN_SCALE = 0.1f;
+static constexpr float MAX_SCALE = 2.0f;
 
 class GameListSortModel final : public QSortFilterProxyModel
 {
@@ -49,9 +46,42 @@ public:
 	{
 	}
 
+	void setFilterType(GameList::EntryType type)
+	{
+		m_filter_type = type;
+		invalidateRowsFilter();
+	}
+	void setFilterRegion(GameList::Region region)
+	{
+		m_filter_region = region;
+		invalidateRowsFilter();
+	}
+	void setFilterName(const QString& name)
+	{
+		m_filter_name = name;
+		invalidateRowsFilter();
+	}
+
 	bool filterAcceptsRow(int source_row, const QModelIndex& source_parent) const override
 	{
-		// TODO: Search
+		if (m_filter_type != GameList::EntryType::Count ||
+			m_filter_region != GameList::Region::Count ||
+			!m_filter_name.isEmpty())
+		{
+			const auto lock = GameList::GetLock();
+			const GameList::Entry* entry = GameList::GetEntryByIndex(source_row);
+			if (m_filter_type != GameList::EntryType::Count && entry->type != m_filter_type)
+				return false;
+			if (m_filter_region != GameList::Region::Count && entry->region != m_filter_region)
+				return false;
+			if (!m_filter_name.isEmpty() &&
+				!QString::fromStdString(entry->path).contains(m_filter_name, Qt::CaseInsensitive) &&
+				!QString::fromStdString(entry->serial).contains(m_filter_name, Qt::CaseInsensitive) &&
+				!QString::fromStdString(entry->title).contains(m_filter_name, Qt::CaseInsensitive) &&
+				!QString::fromStdString(entry->title_en).contains(m_filter_name, Qt::CaseInsensitive))
+				return false;
+		}
+
 		return QSortFilterProxyModel::filterAcceptsRow(source_row, source_parent);
 	}
 
@@ -62,10 +92,47 @@ public:
 
 private:
 	GameListModel* m_model;
+	GameList::EntryType m_filter_type = GameList::EntryType::Count;
+	GameList::Region m_filter_region = GameList::Region::Count;
+	QString m_filter_name;
 };
 
+namespace
+{
+	class GameListIconStyleDelegate final : public QStyledItemDelegate
+	{
+	public:
+		GameListIconStyleDelegate(QWidget* parent)
+			: QStyledItemDelegate(parent)
+		{
+		}
+		~GameListIconStyleDelegate() = default;
+
+		void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+		{
+			// https://stackoverflow.com/questions/32216568/how-to-set-icon-center-in-qtableview
+			Q_ASSERT(index.isValid());
+
+			// draw default item
+			QStyleOptionViewItem opt = option;
+			initStyleOption(&opt, index);
+			opt.icon = QIcon();
+			QApplication::style()->drawControl(QStyle::CE_ItemViewItem, &opt, painter, 0);
+
+			const QRect r = option.rect;
+			const QPixmap pix = qvariant_cast<QPixmap>(index.data(Qt::DecorationRole));
+			const int pix_width = static_cast<int>(pix.width() / pix.devicePixelRatio());
+			const int pix_height = static_cast<int>(pix.width() / pix.devicePixelRatio());
+
+			// draw pixmap at center of item
+			const QPoint p = QPoint((r.width() - pix_width) / 2, (r.height() - pix_height) / 2);
+			painter->drawPixmap(r.topLeft() + p, pix);
+		}
+	};
+} // namespace
+
 GameListWidget::GameListWidget(QWidget* parent /* = nullptr */)
-	: QStackedWidget(parent)
+	: QWidget(parent)
 {
 }
 
@@ -73,13 +140,41 @@ GameListWidget::~GameListWidget() = default;
 
 void GameListWidget::initialize()
 {
-	m_model = new GameListModel(this);
-	m_model->setCoverScale(Host::GetBaseFloatSettingValue("UI", "GameListCoverArtScale", 0.45f));
-	m_model->setShowCoverTitles(Host::GetBaseBoolSettingValue("UI", "GameListShowCoverTitles", true));
+	const float cover_scale = Host::GetBaseFloatSettingValue("UI", "GameListCoverArtScale", 0.45f);
+	const bool show_cover_titles = Host::GetBaseBoolSettingValue("UI", "GameListShowCoverTitles", true);
+	m_model = new GameListModel(cover_scale, show_cover_titles, this);
+	m_model->updateCacheSize(width(), height());
 
 	m_sort_model = new GameListSortModel(m_model);
 	m_sort_model->setSourceModel(m_model);
-	m_table_view = new QTableView(this);
+
+	m_ui.setupUi(this);
+	for (u32 type = 0; type < static_cast<u32>(GameList::EntryType::Count); type++)
+	{
+		m_ui.filterType->addItem(GameListModel::getIconForType(static_cast<GameList::EntryType>(type)),
+			qApp->translate("GameList", GameList::EntryTypeToDisplayString(static_cast<GameList::EntryType>(type))));
+	}
+	for (u32 region = 0; region < static_cast<u32>(GameList::Region::Count); region++)
+	{
+		m_ui.filterRegion->addItem(GameListModel::getIconForRegion(static_cast<GameList::Region>(region)),
+			qApp->translate("GameList", GameList::RegionToString(static_cast<GameList::Region>(region))));
+	}
+
+	connect(m_ui.viewGameList, &QPushButton::clicked, this, &GameListWidget::showGameList);
+	connect(m_ui.viewGameGrid, &QPushButton::clicked, this, &GameListWidget::showGameGrid);
+	connect(m_ui.gridScale, &QSlider::valueChanged, this, &GameListWidget::gridIntScale);
+	connect(m_ui.viewGridTitles, &QPushButton::toggled, this, &GameListWidget::setShowCoverTitles);
+	connect(m_ui.filterType, &QComboBox::currentIndexChanged, this, [this](int index) {
+		m_sort_model->setFilterType((index == 0) ? GameList::EntryType::Count : static_cast<GameList::EntryType>(index - 1));
+	});
+	connect(m_ui.filterRegion, &QComboBox::currentIndexChanged, this, [this](int index) {
+		m_sort_model->setFilterRegion((index == 0) ? GameList::Region::Count : static_cast<GameList::Region>(index - 1));
+	});
+	connect(m_ui.searchText, &QLineEdit::textChanged, this, [this](const QString& text) {
+		m_sort_model->setFilterName(text);
+	});
+
+	m_table_view = new QTableView(m_ui.stack);
 	m_table_view->setModel(m_sort_model);
 	m_table_view->setSortingEnabled(true);
 	m_table_view->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -93,6 +188,7 @@ void GameListWidget::initialize()
 	m_table_view->verticalHeader()->hide();
 	m_table_view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
 	m_table_view->setVerticalScrollMode(QAbstractItemView::ScrollMode::ScrollPerPixel);
+	m_table_view->setItemDelegateForColumn(0, new GameListIconStyleDelegate(this));
 
 	loadTableViewColumnVisibilitySettings();
 	loadTableViewColumnSortSettings();
@@ -107,22 +203,21 @@ void GameListWidget::initialize()
 	connect(m_table_view->horizontalHeader(), &QHeaderView::sortIndicatorChanged, this,
 		&GameListWidget::onTableViewHeaderSortIndicatorChanged);
 
-	insertWidget(0, m_table_view);
+	m_ui.stack->insertWidget(0, m_table_view);
 
-	m_list_view = new GameListGridListView(this);
+	m_list_view = new GameListGridListView(m_ui.stack);
 	m_list_view->setModel(m_sort_model);
 	m_list_view->setModelColumn(GameListModel::Column_Cover);
-	m_list_view->setSelectionMode(QAbstractItemView::ExtendedSelection);
+	m_list_view->setSelectionMode(QAbstractItemView::SingleSelection);
 	m_list_view->setViewMode(QListView::IconMode);
 	m_list_view->setResizeMode(QListView::Adjust);
 	m_list_view->setUniformItemSizes(true);
 	m_list_view->setItemAlignment(Qt::AlignHCenter);
 	m_list_view->setContextMenuPolicy(Qt::CustomContextMenu);
 	m_list_view->setFrameStyle(QFrame::NoFrame);
-	m_list_view->setSpacing(m_model->getCoverArtSpacing());
 	m_list_view->setVerticalScrollMode(QAbstractItemView::ScrollMode::ScrollPerPixel);
-
-	updateListFont();
+	m_list_view->verticalScrollBar()->setSingleStep(15);
+	onCoverScaleChanged();
 
 	connect(m_list_view->selectionModel(), &QItemSelectionModel::currentChanged, this,
 		&GameListWidget::onSelectionModelCurrentChanged);
@@ -130,32 +225,36 @@ void GameListWidget::initialize()
 	connect(m_list_view, &GameListGridListView::zoomOut, this, &GameListWidget::gridZoomOut);
 	connect(m_list_view, &QListView::activated, this, &GameListWidget::onListViewItemActivated);
 	connect(m_list_view, &QListView::customContextMenuRequested, this, &GameListWidget::onListViewContextMenuRequested);
+	connect(m_model, &GameListModel::coverScaleChanged, this, &GameListWidget::onCoverScaleChanged);
 
-	insertWidget(1, m_list_view);
+	m_ui.stack->insertWidget(1, m_list_view);
 
-	m_empty_widget = new QWidget(this);
+	m_empty_widget = new QWidget(m_ui.stack);
 	m_empty_ui.setupUi(m_empty_widget);
 	m_empty_ui.supportedFormats->setText(qApp->translate("GameListWidget", SUPPORTED_FORMATS_STRING));
 	connect(m_empty_ui.addGameDirectory, &QPushButton::clicked, this, [this]() { emit addGameDirectoryRequested(); });
 	connect(m_empty_ui.scanForNewGames, &QPushButton::clicked, this, [this]() { refresh(false); });
-	insertWidget(2, m_empty_widget);
+	m_ui.stack->insertWidget(2, m_empty_widget);
 
 	if (Host::GetBaseBoolSettingValue("UI", "GameListGridView", false))
-		setCurrentIndex(1);
+		m_ui.stack->setCurrentIndex(1);
 	else
-		setCurrentIndex(0);
+		m_ui.stack->setCurrentIndex(0);
 
+	setFocusProxy(m_ui.stack->currentWidget());
+
+	updateToolbar();
 	resizeTableViewColumnsToFit();
 }
 
 bool GameListWidget::isShowingGameList() const
 {
-	return currentIndex() == 0;
+	return m_ui.stack->currentIndex() == 0;
 }
 
 bool GameListWidget::isShowingGameGrid() const
 {
-	return currentIndex() == 1;
+	return m_ui.stack->currentIndex() == 1;
 }
 
 bool GameListWidget::getShowGridCoverTitles() const
@@ -182,15 +281,25 @@ void GameListWidget::cancelRefresh()
 
 	m_refresh_thread->cancel();
 	m_refresh_thread->wait();
-	QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-	pxAssertRel(!m_refresh_thread, "Game list thread should be unreferenced by now");
+
+	// Cancelling might not be instant if we're say, scanning a gzip dump. Wait until it's done.
+	while (m_refresh_thread)
+		QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 1);
+}
+
+void GameListWidget::reloadThemeSpecificImages()
+{
+	m_model->reloadThemeSpecificImages();
 }
 
 void GameListWidget::onRefreshProgress(const QString& status, int current, int total)
 {
 	// switch away from the placeholder while we scan, in case we find anything
-	if (currentIndex() == 2)
-		setCurrentIndex(Host::GetBaseBoolSettingValue("UI", "GameListGridView", false) ? 1 : 0);
+	if (m_ui.stack->currentIndex() == 2)
+	{
+		m_ui.stack->setCurrentIndex(Host::GetBaseBoolSettingValue("UI", "GameListGridView", false) ? 1 : 0);
+		setFocusProxy(m_ui.stack->currentWidget());
+	}
 
 	m_model->refresh();
 	emit refreshProgress(status, current, total);
@@ -208,7 +317,10 @@ void GameListWidget::onRefreshComplete()
 
 	// if we still had no games, switch to the helper widget
 	if (m_model->rowCount() == 0)
-		setCurrentIndex(2);
+	{
+		m_ui.stack->setCurrentIndex(2);
+		setFocusProxy(nullptr);
+	}
 }
 
 void GameListWidget::onSelectionModelCurrentChanged(const QModelIndex& current, const QModelIndex& previous)
@@ -275,17 +387,24 @@ void GameListWidget::onTableViewHeaderSortIndicatorChanged(int, Qt::SortOrder)
 	saveTableViewColumnSortSettings();
 }
 
+void GameListWidget::onCoverScaleChanged()
+{
+	m_model->updateCacheSize(width(), height());
+
+	m_list_view->setSpacing(m_model->getCoverArtSpacing());
+
+	QFont font;
+	font.setPointSizeF(20.0f * m_model->getCoverScale());
+	m_list_view->setFont(font);
+}
+
 void GameListWidget::listZoom(float delta)
 {
-	static constexpr float MIN_SCALE = 0.1f;
-	static constexpr float MAX_SCALE = 2.0f;
-
 	const float new_scale = std::clamp(m_model->getCoverScale() + delta, MIN_SCALE, MAX_SCALE);
-	QtHost::SetBaseFloatSettingValue("UI", "GameListCoverArtScale", new_scale);
+	Host::SetBaseFloatSettingValue("UI", "GameListCoverArtScale", new_scale);
+	Host::CommitBaseSettingChanges();
 	m_model->setCoverScale(new_scale);
-	updateListFont();
-
-	m_model->refresh();
+	updateToolbar();
 }
 
 void GameListWidget::gridZoomIn()
@@ -298,6 +417,16 @@ void GameListWidget::gridZoomOut()
 	listZoom(-0.05f);
 }
 
+void GameListWidget::gridIntScale(int int_scale)
+{
+	const float new_scale = std::clamp(static_cast<float>(int_scale) / 100.0f, MIN_SCALE, MAX_SCALE);
+
+	Host::SetBaseFloatSettingValue("UI", "GameListCoverArtScale", new_scale);
+	Host::CommitBaseSettingChanges();
+	m_model->setCoverScale(new_scale);
+	updateToolbar();
+}
+
 void GameListWidget::refreshGridCovers()
 {
 	m_model->refreshCovers();
@@ -305,21 +434,37 @@ void GameListWidget::refreshGridCovers()
 
 void GameListWidget::showGameList()
 {
-	if (currentIndex() == 0 || m_model->rowCount() == 0)
+	if (m_ui.stack->currentIndex() == 0 || m_model->rowCount() == 0)
+	{
+		// We can click the toolbar multiple times, so keep it correct.
+		updateToolbar();
 		return;
+	}
 
-	QtHost::SetBaseBoolSettingValue("UI", "GameListGridView", false);
-	setCurrentIndex(0);
+	Host::SetBaseBoolSettingValue("UI", "GameListGridView", false);
+	Host::CommitBaseSettingChanges();
+	m_ui.stack->setCurrentIndex(0);
+	setFocusProxy(m_ui.stack->currentWidget());
 	resizeTableViewColumnsToFit();
+	updateToolbar();
+	emit layoutChange();
 }
 
 void GameListWidget::showGameGrid()
 {
-	if (currentIndex() == 1 || m_model->rowCount() == 0)
+	if (m_ui.stack->currentIndex() == 1 || m_model->rowCount() == 0)
+	{
+		// We can click the toolbar multiple times, so keep it correct.
+		updateToolbar();
 		return;
+	}
 
-	QtHost::SetBaseBoolSettingValue("UI", "GameListGridView", true);
-	setCurrentIndex(1);
+	Host::SetBaseBoolSettingValue("UI", "GameListGridView", true);
+	Host::CommitBaseSettingChanges();
+	m_ui.stack->setCurrentIndex(1);
+	setFocusProxy(m_ui.stack->currentWidget());
+	updateToolbar();
+	emit layoutChange();
 }
 
 void GameListWidget::setShowCoverTitles(bool enabled)
@@ -327,23 +472,44 @@ void GameListWidget::setShowCoverTitles(bool enabled)
 	if (m_model->getShowCoverTitles() == enabled)
 		return;
 
-	QtHost::SetBaseBoolSettingValue("UI", "GameListShowCoverTitles", enabled);
+	Host::SetBaseBoolSettingValue("UI", "GameListShowCoverTitles", enabled);
+	Host::CommitBaseSettingChanges();
 	m_model->setShowCoverTitles(enabled);
 	if (isShowingGameGrid())
 		m_model->refresh();
+	updateToolbar();
+	emit layoutChange();
 }
 
-void GameListWidget::updateListFont()
+void GameListWidget::updateToolbar()
 {
-	QFont font;
-	font.setPointSizeF(16.0f * m_model->getCoverScale());
-	m_list_view->setFont(font);
+	const bool grid_view = isShowingGameGrid();
+	{
+		QSignalBlocker sb(m_ui.viewGameGrid);
+		m_ui.viewGameGrid->setChecked(grid_view);
+	}
+	{
+		QSignalBlocker sb(m_ui.viewGameList);
+		m_ui.viewGameList->setChecked(!grid_view);
+	}
+	{
+		QSignalBlocker sb(m_ui.viewGridTitles);
+		m_ui.viewGridTitles->setChecked(m_model->getShowCoverTitles());
+	}
+	{
+		QSignalBlocker sb(m_ui.gridScale);
+		m_ui.gridScale->setValue(static_cast<int>(m_model->getCoverScale() * 100.0f));
+	}
+
+	m_ui.viewGridTitles->setEnabled(grid_view);
+	m_ui.gridScale->setEnabled(grid_view);
 }
 
 void GameListWidget::resizeEvent(QResizeEvent* event)
 {
-	QStackedWidget::resizeEvent(event);
+	QWidget::resizeEvent(event);
 	resizeTableViewColumnsToFit();
+	m_model->updateCacheSize(width(), height());
 }
 
 void GameListWidget::resizeTableViewColumnsToFit()
@@ -353,10 +519,12 @@ void GameListWidget::resizeTableViewColumnsToFit()
 														 80, // code
 														 -1, // title
 														 -1, // file title
-														 60, // crc
+														 65, // crc
+														 80, // time played
+														 80, // last played
 														 80, // size
 														 60, // region
-														 100 // compatibility
+														 120 // compatibility
 													 });
 }
 
@@ -374,6 +542,8 @@ void GameListWidget::loadTableViewColumnVisibilitySettings()
 		true, // title
 		false, // file title
 		false, // crc
+		true, // time played
+		true, // last played
 		true, // size
 		true, // region
 		true // compatibility
@@ -392,14 +562,16 @@ void GameListWidget::saveTableViewColumnVisibilitySettings()
 	for (int column = 0; column < GameListModel::Column_Count; column++)
 	{
 		const bool visible = !m_table_view->isColumnHidden(column);
-		QtHost::SetBaseBoolSettingValue("GameListTableView", getColumnVisibilitySettingsKeyName(column).c_str(), visible);
+		Host::SetBaseBoolSettingValue("GameListTableView", getColumnVisibilitySettingsKeyName(column).c_str(), visible);
+		Host::CommitBaseSettingChanges();
 	}
 }
 
 void GameListWidget::saveTableViewColumnVisibilitySettings(int column)
 {
 	const bool visible = !m_table_view->isColumnHidden(column);
-	QtHost::SetBaseBoolSettingValue("GameListTableView", getColumnVisibilitySettingsKeyName(column).c_str(), visible);
+	Host::SetBaseBoolSettingValue("GameListTableView", getColumnVisibilitySettingsKeyName(column).c_str(), visible);
+	Host::CommitBaseSettingChanges();
 }
 
 void GameListWidget::loadTableViewColumnSortSettings()
@@ -412,7 +584,10 @@ void GameListWidget::loadTableViewColumnSortSettings()
 			.value_or(DEFAULT_SORT_COLUMN);
 	const bool sort_descending =
 		Host::GetBaseBoolSettingValue("GameListTableView", "SortDescending", DEFAULT_SORT_DESCENDING);
-	m_table_view->sortByColumn(sort_column, sort_descending ? Qt::DescendingOrder : Qt::AscendingOrder);
+	const Qt::SortOrder sort_order = sort_descending ? Qt::DescendingOrder : Qt::AscendingOrder;
+	m_sort_model->sort(sort_column, sort_order);
+	if (QHeaderView* hv = m_table_view->horizontalHeader())
+		hv->setSortIndicator(sort_column, sort_order);
 }
 
 void GameListWidget::saveTableViewColumnSortSettings()
@@ -422,16 +597,17 @@ void GameListWidget::saveTableViewColumnSortSettings()
 
 	if (sort_column >= 0 && sort_column < GameListModel::Column_Count)
 	{
-		QtHost::SetBaseStringSettingValue(
+		Host::SetBaseStringSettingValue(
 			"GameListTableView", "SortColumn", GameListModel::getColumnName(static_cast<GameListModel::Column>(sort_column)));
 	}
 
-	QtHost::SetBaseBoolSettingValue("GameListTableView", "SortDescending", sort_descending);
+	Host::SetBaseBoolSettingValue("GameListTableView", "SortDescending", sort_descending);
+	Host::CommitBaseSettingChanges();
 }
 
 const GameList::Entry* GameListWidget::getSelectedEntry() const
 {
-	if (currentIndex() == 0)
+	if (m_ui.stack->currentIndex() == 0)
 	{
 		const QItemSelectionModel* selection_model = m_table_view->selectionModel();
 		if (!selection_model->hasSelection())
@@ -459,6 +635,19 @@ const GameList::Entry* GameListWidget::getSelectedEntry() const
 
 		return GameList::GetEntryByIndex(source_index.row());
 	}
+}
+
+void GameListWidget::rescanFile(const std::string& path)
+{
+	// We can't do this while there's a VM running, because of CDVD state... ugh.
+	if (QtHost::IsVMValid())
+	{
+		Console.Error(fmt::format("Can't re-scan ELF at '{}' because we have a VM running.", path));
+		return;
+	}
+
+	GameList::RescanPath(path);
+	m_model->refresh();
 }
 
 GameListGridListView::GameListGridListView(QWidget* parent /*= nullptr*/)

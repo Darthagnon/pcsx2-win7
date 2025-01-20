@@ -1,23 +1,14 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
-#include "pcsx2/Frontend/GameList.h"
+
 #include "ui_EmptyGameListWidget.h"
+#include "ui_GameListWidget.h"
+
+#include "pcsx2/GameList.h"
+
 #include <QtWidgets/QListView>
-#include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QTableView>
 
 Q_DECLARE_METATYPE(const GameList::Entry*);
@@ -41,7 +32,7 @@ protected:
 	void wheelEvent(QWheelEvent* e);
 };
 
-class GameListWidget : public QStackedWidget
+class GameListWidget : public QWidget
 {
 	Q_OBJECT
 
@@ -56,13 +47,16 @@ public:
 
 	void refresh(bool invalidate_cache);
 	void cancelRefresh();
+	void reloadThemeSpecificImages();
 
 	bool isShowingGameList() const;
 	bool isShowingGameGrid() const;
-
 	bool getShowGridCoverTitles() const;
 
 	const GameList::Entry* getSelectedEntry() const;
+
+	/// Rescans a single file. NOTE: Happens on UI thread.
+	void rescanFile(const std::string& path);
 
 Q_SIGNALS:
 	void refreshProgress(const QString& status, int current, int total);
@@ -73,6 +67,7 @@ Q_SIGNALS:
 	void entryContextMenuRequested(const QPoint& point);
 
 	void addGameDirectoryRequested();
+	void layoutChange();
 
 private Q_SLOTS:
 	void onRefreshProgress(const QString& status, int current, int total);
@@ -85,6 +80,7 @@ private Q_SLOTS:
 	void onTableViewHeaderSortIndicatorChanged(int, Qt::SortOrder);
 	void onListViewItemActivated(const QModelIndex& index);
 	void onListViewContextMenuRequested(const QPoint& point);
+	void onCoverScaleChanged();
 
 public Q_SLOTS:
 	void showGameList();
@@ -92,6 +88,7 @@ public Q_SLOTS:
 	void setShowCoverTitles(bool enabled);
 	void gridZoomIn();
 	void gridZoomOut();
+	void gridIntScale(int int_scale);
 	void refreshGridCovers();
 
 protected:
@@ -104,7 +101,9 @@ private:
 	void loadTableViewColumnSortSettings();
 	void saveTableViewColumnSortSettings();
 	void listZoom(float delta);
-	void updateListFont();
+	void updateToolbar();
+
+	Ui::GameListWidget m_ui;
 
 	GameListModel* m_model = nullptr;
 	GameListSortModel* m_sort_model = nullptr;

@@ -1,23 +1,9 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 // This module contains code shared by both the dynarec and interpreter versions
 // of the VU0 micro.
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
 #include <cmath>
 #include "VUmicro.h"
@@ -38,7 +24,10 @@ void vu1ResetRegs()
 void vu1Finish(bool add_cycles) {
 	if (THREAD_VU1) {
 		//if (VU0.VI[REG_VPU_STAT].UL & 0x100) DevCon.Error("MTVU: VU0.VI[REG_VPU_STAT].UL & 0x100");
-		vu1Thread.WaitVU();
+		if (INSTANT_VU1 || add_cycles)
+		{
+			vu1Thread.WaitVU();
+		}
 		vu1Thread.Get_MTVUChanges();
 		return;
 	}
@@ -70,7 +59,6 @@ void vu1ExecMicro(u32 addr)
 		//	VU0.VI[REG_VPU_STAT].UL |= 0x0100;
 		// }
 		// Update 25/06/2022: Disabled this for now, let games YOLO it, if it breaks MTVU, disable MTVU (it doesn't work properly anyway) - Refraction
-
 		vu1Thread.ExecuteVU(addr, vif1Regs.top, vif1Regs.itop, VU0.VI[REG_FBRST].UL);
 		return;
 	}
@@ -89,4 +77,9 @@ void vu1ExecMicro(u32 addr)
 		CpuVU1->ExecuteBlock(1);
 	else
 		CpuVU1->Execute(vu1RunCycles);
+}
+
+void MTVUInterrupt()
+{
+	VU0.VI[REG_VPU_STAT].UL &= ~0xFF00;
 }

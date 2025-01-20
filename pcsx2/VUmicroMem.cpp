@@ -1,53 +1,29 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-
-#include "PrecompiledHeader.h"
 #include "Common.h"
 #include "VUmicro.h"
 #include "MTVU.h"
 
 alignas(16) VURegs vuRegs[2];
 
-vuMemoryReserve::vuMemoryReserve()
-	: _parent( "VU0/1 on-chip memory", VU1_PROGSIZE + VU1_MEMSIZE + VU0_PROGSIZE + VU0_MEMSIZE )
+void vuMemAllocate()
 {
-}
-
-void vuMemoryReserve::Reserve(VirtualMemoryManagerPtr allocator)
-{
-	_parent::Reserve(std::move(allocator), HostMemoryMap::VUmemOffset);
-	//_parent::Reserve(EmuConfig.HostMemMap.VUmem);
-
-	u8* curpos = m_reserve.GetPtr();
+	u8* curpos = SysMemory::GetVUMem();
 	VU0.Micro	= curpos; curpos += VU0_PROGSIZE;
 	VU0.Mem		= curpos; curpos += VU0_MEMSIZE;
 	VU1.Micro	= curpos; curpos += VU1_PROGSIZE;
 	VU1.Mem		= curpos; curpos += VU1_MEMSIZE;
 }
 
-vuMemoryReserve::~vuMemoryReserve()
+void vuMemRelease()
 {
-	VU0.Micro	= VU0.Mem	= NULL;
-	VU1.Micro	= VU1.Mem	= NULL;
+	VU0.Micro = VU0.Mem = nullptr;
+	VU1.Micro = VU1.Mem = nullptr;
 }
 
-void vuMemoryReserve::Reset()
+void vuMemReset()
 {
-	_parent::Reset();
-	
 	pxAssert( VU0.Mem );
 	pxAssert( VU1.Mem );
 
@@ -55,9 +31,9 @@ void vuMemoryReserve::Reset()
 	//memMapVUmicro();
 
 	// === VU0 Initialization ===
-	memzero(VU0.ACC);
-	memzero(VU0.VF);
-	memzero(VU0.VI);
+	std::memset(&VU0.ACC, 0, sizeof(VU0.ACC));
+	std::memset(VU0.VF, 0, sizeof(VU0.VF));
+	std::memset(VU0.VI, 0, sizeof(VU0.VI));
     VU0.VF[0].f.x = 0.0f;
 	VU0.VF[0].f.y = 0.0f;
 	VU0.VF[0].f.z = 0.0f;
@@ -65,9 +41,9 @@ void vuMemoryReserve::Reset()
 	VU0.VI[0].UL = 0;
 
 	// === VU1 Initialization ===
-	memzero(VU1.ACC);
-	memzero(VU1.VF);
-	memzero(VU1.VI);
+	std::memset(&VU1.ACC, 0, sizeof(VU1.ACC));
+	std::memset(VU1.VF, 0, sizeof(VU1.VF));
+	std::memset(VU1.VI, 0, sizeof(VU1.VI));
 	VU1.VF[0].f.x = 0.0f;
 	VU1.VF[0].f.y = 0.0f;
 	VU1.VF[0].f.z = 0.0f;
@@ -75,12 +51,13 @@ void vuMemoryReserve::Reset()
 	VU1.VI[0].UL = 0;
 }
 
-void SaveStateBase::vuMicroFreeze()
+bool SaveStateBase::vuMicroFreeze()
 {
 	if(IsSaving())
 		vu1Thread.WaitVU();
 
-	FreezeTag( "vuMicroRegs" );
+	if (!FreezeTag("vuMicroRegs"))
+		return false;
 
 	// VU0 state information
 
@@ -100,7 +77,6 @@ void SaveStateBase::vuMicroFreeze()
 	Freeze(VU0.ebit);
 	Freeze(VU0.pending_q);
 	Freeze(VU0.pending_p);
-	Freeze(VU0.blockhasmbit);
 	Freeze(VU0.micro_macflags);
 	Freeze(VU0.micro_clipflags);
 	Freeze(VU0.micro_statusflags);
@@ -140,7 +116,6 @@ void SaveStateBase::vuMicroFreeze()
 	Freeze(VU1.ebit);
 	Freeze(VU1.pending_q);
 	Freeze(VU1.pending_p);
-	Freeze(VU1.blockhasmbit);
 	Freeze(VU1.micro_macflags);
 	Freeze(VU1.micro_clipflags);
 	Freeze(VU1.micro_statusflags);
@@ -168,4 +143,6 @@ void SaveStateBase::vuMicroFreeze()
 	Freeze(VU1.ialureadpos);
 	Freeze(VU1.ialuwritepos);
 	Freeze(VU1.ialucount);
+
+	return IsOkay();
 }

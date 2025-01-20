@@ -1,52 +1,21 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
+#include "GS/MultiISA.h"
+#include "common/Assertions.h"
+
+// Xbyak pulls in windows.h, and breaks everything.
+#ifdef _WIN32
+#include "common/RedtapeWindows.h"
+#endif
+
+#define XBYAK_NO_OP_NAMES
+#define XBYAK_ENABLE_OMITTED_OPERAND
+
 #include "xbyak/xbyak.h"
 #include "xbyak/xbyak_util.h"
-
-namespace SSEVersion
-{
-	enum SSEVersion
-	{
-		AVX2  = 0x501,
-		AVX   = 0x500,
-		SSE41 = 0x401,
-	};
-}
-
-/// Similar to Xbyak::util::cpu but more open to us putting in extra flags (e.g. "vpgatherdd is fast"), as well as making it easier to test other configurations by artifically limiting features
-struct CPUInfo
-{
-	bool hasFMA = false;
-	SSEVersion::SSEVersion sseVersion = SSEVersion::SSE41;
-
-	CPUInfo() = default;
-	CPUInfo(const Xbyak::util::Cpu& cpu)
-	{
-		auto version = SSEVersion::SSE41;
-		if (cpu.has(cpu.tAVX))
-			version = SSEVersion::AVX;
-		if (cpu.has(cpu.tAVX2))
-			version = SSEVersion::AVX2;
-
-		hasFMA = cpu.has(cpu.tFMA);
-		sseVersion = version;
-	}
-};
 
 /// Code generator that automatically selects between SSE and AVX, x86 and x64 so you don't have to
 /// Should make combined SSE and AVX codegen much easier
@@ -65,58 +34,18 @@ public:
 	using Ymm = Xbyak::Ymm;
 	using Zmm = Xbyak::Zmm;
 
-	class Error : public std::exception
-	{
-	public:
-		enum Value
-		{
-			ERR_64_BIT_REG_IN_32,
-			ERR_64_INSTR_IN_32,
-			ERR_SSE_INSTR_IN_AVX,
-			ERR_AVX_INSTR_IN_SSE,
-		};
-
-		Value value;
-
-		Error(Value value) : value(value) {}
-
-		const char* what() const noexcept
-		{
-			static const char* tbl[] = {
-				"used 64-bit register in 32-bit code",
-				"used 64-bit only instruction in 32-bit code",
-				"used SSE instruction in AVX code",
-				"used AVX instruction in SSE code",
-			};
-			if (static_cast<u32>(value) < (sizeof(tbl) / sizeof(*tbl)))
-			{
-				return tbl[value];
-			}
-			else
-			{
-				return "GSNewCodeGenerator Unknown Error";
-			}
-		}
-	};
-
 private:
 	void requireAVX()
 	{
 		if (!hasAVX)
-			throw Error(Error::ERR_AVX_INSTR_IN_SSE);
+			pxFailRel("used AVX instruction in SSE code");
 	}
 
 public:
-	Xbyak::CodeGenerator& actual;
+	Xbyak::CodeGenerator actual;
 
 	using AddressReg = Xbyak::Reg64;
 	using RipType = Xbyak::RegRip;
-
-	template <typename T32, typename T64>
-	struct Choose3264 { using type = T64; };
-
-	template <typename T32, typename T64>
-	static T64 choose3264(T32 t32, T64 t64) { return t64; }
 
 	const bool hasAVX, hasAVX2, hasFMA;
 
@@ -130,13 +59,16 @@ public:
 	const RipType rip{};
 	const Xbyak::AddressFrame ptr{0}, byte{8}, word{16}, dword{32}, qword{64}, xword{128}, yword{256}, zword{512};
 
-	GSNewCodeGenerator(Xbyak::CodeGenerator* actual, CPUInfo cpu)
-		: actual(*actual)
-		, hasAVX(cpu.sseVersion >= SSEVersion::AVX)
-		, hasAVX2(cpu.sseVersion >= SSEVersion::AVX2)
-		, hasFMA(cpu.hasFMA)
+	GSNewCodeGenerator(void* code, size_t maxsize)
+		: actual(maxsize, code)
+		, hasAVX(g_cpu.vectorISA >= ProcessorFeatures::VectorISA::AVX)
+		, hasAVX2(g_cpu.vectorISA >= ProcessorFeatures::VectorISA::AVX2)
+		, hasFMA(g_cpu.hasFMA)
 	{
 	}
+
+	size_t GetSize() const { return actual.getSize(); }
+	const u8* GetCode() const { return actual.getCode(); }
 
 
 // ------------ Forwarding instructions ------------
@@ -159,10 +91,6 @@ public:
 // ACTUAL_FORWARD_*: Actually forward the function of the given type
 // FORWARD#: First validates the arguments (e.g. make sure you're not passing registers over 7 on x86), then forwards to an ACTUAL_FORWARD_*
 
-// Big thanks to https://stackoverflow.com/a/24028231 for helping me figure out how to work around MSVC's terrible macro expander
-// Of course GCC/Clang don't like the workaround so enjoy the ifdefs
-#define EXPAND_ARGS(macro, args) macro args
-
 #define ACTUAL_FORWARD_BASE(name, ...) \
 	actual.name(__VA_ARGS__);
 
@@ -174,7 +102,7 @@ public:
 
 #define ACTUAL_FORWARD_SSEONLY(name, ...) \
 	if (hasAVX) \
-		throw Error(Error::ERR_SSE_INSTR_IN_AVX); \
+		pxFailRel("used SSE instruction in AVX code"); \
 	else \
 		actual.name(__VA_ARGS__);
 
@@ -182,19 +110,19 @@ public:
 	if (hasAVX) \
 		actual.name(__VA_ARGS__); \
 	else \
-		throw Error(Error::ERR_AVX_INSTR_IN_SSE);
+		pxFailRel("used AVX instruction in SSE code");
 
 #define ACTUAL_FORWARD_AVX2(name, ...) \
 	if (hasAVX2) \
 		actual.name(__VA_ARGS__); \
 	else \
-		throw Error(Error::ERR_AVX_INSTR_IN_SSE);
+		pxFailRel("used AVX instruction in SSE code");
 
 #define ACTUAL_FORWARD_FMA(name, ...) \
 	if (hasFMA) \
 		actual.name(__VA_ARGS__); \
 	else \
-		throw Error(Error::ERR_AVX_INSTR_IN_SSE);
+		pxFailRel("used AVX instruction in SSE code");
 
 #define FORWARD1(category, name, type) \
 	void name(type a) \
@@ -220,15 +148,9 @@ public:
 		ACTUAL_FORWARD_##category(name, a, b, c, d) \
 	}
 
-#ifdef __GNUC__
-	#define FORWARD_(argcount, ...) FORWARD##argcount(__VA_ARGS__)
-	// Gets the macro evaluator to evaluate in the right order
-	#define FORWARD(...) FORWARD_(__VA_ARGS__)
-#else
-	#define FORWARD_(argcount, ...) EXPAND_ARGS(FORWARD##argcount, (__VA_ARGS__))
-	// Gets the macro evaluator to evaluate in the right order
-	#define FORWARD(...) EXPAND_ARGS(FORWARD_, (__VA_ARGS__))
-#endif
+#define FORWARD_(argcount, ...) FORWARD##argcount(__VA_ARGS__)
+// Gets the macro evaluator to evaluate in the right order
+#define FORWARD(...) FORWARD_(__VA_ARGS__)
 
 #define FORWARD_SSE_XMM0(name) \
 	void name(const Xmm& a, const Operand& b) \
@@ -248,21 +170,12 @@ public:
 #define ADD_ONE_2 3
 #define ADD_ONE_3 4
 
-#ifdef __GNUC__
-	#define SFORWARD(argcount, name, ...) FORWARD(argcount, SSE, name, __VA_ARGS__)
-	#define AFORWARD_(argcount, name, arg1, ...) \
-		SFORWARD(argcount, name, arg1, __VA_ARGS__) \
-		FORWARD(ADD_ONE_##argcount, AVX, v##name, arg1, arg1, __VA_ARGS__)
-	// Gets the macro evaluator to evaluate in the right order
-	#define AFORWARD(...) EXPAND_ARGS(AFORWARD_, (__VA_ARGS__))
-#else
-	#define SFORWARD(argcount, name, ...) EXPAND_ARGS(FORWARD, (argcount, SSE, name, __VA_ARGS__))
-	#define AFORWARD_(argcount, name, arg1, ...) \
-		EXPAND_ARGS(SFORWARD, (argcount, name, arg1, __VA_ARGS__)) \
-		EXPAND_ARGS(FORWARD, (ADD_ONE_##argcount, AVX, v##name, arg1, arg1, __VA_ARGS__))
-	// Gets the macro evaluator to evaluate in the right order
-	#define AFORWARD(...) EXPAND_ARGS(AFORWARD_, (__VA_ARGS__))
-#endif
+#define SFORWARD(argcount, name, ...) FORWARD(argcount, SSE, name, __VA_ARGS__)
+#define AFORWARD_(argcount, name, arg1, ...) \
+	SFORWARD(argcount, name, arg1, __VA_ARGS__) \
+	FORWARD(ADD_ONE_##argcount, AVX, v##name, arg1, arg1, __VA_ARGS__)
+// Gets the macro evaluator to evaluate in the right order
+#define AFORWARD(...) AFORWARD_(__VA_ARGS__)
 
 #define FORWARD_OO_OI(name) \
 	FORWARD(2, BASE, name, ARGS_OO) \
@@ -286,16 +199,16 @@ public:
 	void vzeroall() { requireAVX(); actual.vzeroall(); }
 
 	FORWARD_OO_OI(add)
-	FORWARD_OO_OI(and)
+	FORWARD_OO_OI(and_)
 	FORWARD_OO_OI(cmp)
-	FORWARD_OO_OI(or)
+	FORWARD_OO_OI(or_)
 	FORWARD_OO_OI(sub)
-	FORWARD_OO_OI(xor)
+	FORWARD_OO_OI(xor_)
 	FORWARD(2, BASE, lea,   const Reg&, const Address&)
 	FORWARD(2, BASE, mov,   const Operand&, size_t)
 	FORWARD(2, BASE, mov,   ARGS_OO)
 	FORWARD(2, BASE, movzx, const Reg&, const Operand&)
-	FORWARD(1, BASE, not,   const Operand&)
+	FORWARD(1, BASE, not_,  const Operand&)
 	FORWARD(1, BASE, pop,   const Operand&)
 	FORWARD(1, BASE, push,  const Operand&)
 	FORWARD(2, BASE, sar,   const Operand&, const Reg8&)
@@ -324,6 +237,7 @@ public:
 	AFORWARD(2, cvtss2sd,  ARGS_XO)
 	SFORWARD(2, cvttps2dq, ARGS_XO)
 	SFORWARD(2, cvttsd2si, const AddressReg&, const Operand&);
+	AFORWARD(2, divps,	   ARGS_XO)
 	SFORWARD(3, extractps, const Operand&, const Xmm&, u8)
 	AFORWARD(2, maxps,     ARGS_XO)
 	AFORWARD(2, minps,     ARGS_XO)

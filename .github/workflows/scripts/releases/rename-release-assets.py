@@ -1,10 +1,10 @@
 import os
 import shutil
 
-tag = os.environ['TAG'].split("refs/tags/")[1]
+tag = os.environ['TAG_VAL']
 scan_dir = os.environ['SCAN_DIR']
 output_dir = os.environ['OUT_DIR']
-accepted_exts = ["AppImage", "tar.gz", "7z"]
+accepted_exts = ["AppImage", "flatpak", "tar.xz", "7z"]
 
 
 for dir_name in os.listdir(scan_dir):
@@ -12,20 +12,21 @@ for dir_name in os.listdir(scan_dir):
   if "macos" in dir_name.lower():
     asset_name += "-macos"
   elif "linux" in dir_name.lower():
-    asset_name += "-linux-AppImage-64bit"
-  elif "windows" in dir_name.lower():
-    asset_name += "-windows-64bit"
-    if "avx" in dir_name.lower():
-      asset_name += "-AVX2"
+    if "flatpak" in dir_name.lower():
+      asset_name += "-linux-flatpak-x64"
     else:
-      asset_name += "-SSE4"
+      asset_name += "-linux-appimage-x64"
+  elif "windows" in dir_name.lower():
+    asset_name += "-windows-x64"
   else:
     continue;
 
-  if "wxwidgets" in dir_name.lower():
-    asset_name += "-wxWidgets"
-  else:
-    asset_name += "-Qt"
+  if "avx2" in dir_name.lower():
+    asset_name += "-AVX2"
+  elif "sse4" in dir_name.lower():
+    asset_name += "-SSE4"
+
+  asset_name += "-Qt"
 
   if "symbols" in dir_name.lower():
     asset_name += "-symbols"

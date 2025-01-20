@@ -1,23 +1,13 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "input-keymap.h"
 
+#include <cassert>
+#include <map>
+
 //TODO how much does std::map kill perf if any?
-const std::map<const QKeyCode, unsigned short> qemu_input_map_qcode_to_qnum = {
+static const std::map<const QKeyCode, unsigned short> qemu_input_map_qcode_to_qnum = {
 	{Q_KEY_CODE_0, 0xb},                 /* qcode:Q_KEY_CODE_0 (0) -> linux:11 (KEY_0) -> qnum:11 */
 	{Q_KEY_CODE_1, 0x2},                 /* qcode:Q_KEY_CODE_1 (1) -> linux:2 (KEY_1) -> qnum:2 */
 	{Q_KEY_CODE_2, 0x3},                 /* qcode:Q_KEY_CODE_2 (2) -> linux:3 (KEY_2) -> qnum:3 */
@@ -198,7 +188,7 @@ int qemu_input_key_value_to_scancode(const KeyValue* value, bool down,
 		value->u.qcode == Q_KEY_CODE_PAUSE)
 	{
 		/* specific case */
-		int v = down ? 0 : 0x80;
+		const int v = down ? 0 : 0x80;
 		codes[count++] = 0xe1;
 		codes[count++] = 0x1d | v;
 		codes[count++] = 0x45 | v;

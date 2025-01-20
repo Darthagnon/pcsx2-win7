@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- * 
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -26,8 +14,8 @@ __fi int getLastFlagInst(microRegInfo& pState, int* xFlag, int flagType, int isE
 	return (((pState.flagInfo >> (2 * flagType + 2)) & 3) - 1) & 3;
 }
 
-void mVU0clearlpStateJIT() { if (!microVU0.prog.cleared) memzero(microVU0.prog.lpState); }
-void mVU1clearlpStateJIT() { if (!microVU1.prog.cleared) memzero(microVU1.prog.lpState); }
+void mVU0clearlpStateJIT() { if (!microVU0.prog.cleared) std::memset(&microVU0.prog.lpState, 0, sizeof(microVU1.prog.lpState)); }
+void mVU1clearlpStateJIT() { if (!microVU1.prog.cleared) std::memset(&microVU1.prog.lpState, 0, sizeof(microVU1.prog.lpState)); }
 
 void mVUDTendProgram(mV, microFlagCycles* mFC, int isEbit)
 {
@@ -125,7 +113,8 @@ void mVUDTendProgram(mV, microFlagCycles* mFC, int isEbit)
 		xMOVAPS(ptr128[&mVU.regs().micro_statusflags], xmmT1);
 	}
 
-	xMOV(ptr32[&mVU.regs().nextBlockCycles], 0);
+	if (EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Gamefixes.FullVU0SyncHack)
+		xMOV(ptr32[&mVU.regs().nextBlockCycles], 0);
 
 
 	xMOV(ptr32[&mVU.regs().VI[REG_TPC].UL], xPC);
@@ -165,8 +154,8 @@ void mVUendProgram(mV, microFlagCycles* mFC, int isEbit)
 
 	if (isEbit && isEbit != 3)
 	{
-		memzero(mVUinfo);
-		memzero(mVUregsTemp);
+		std::memset(&mVUinfo, 0, sizeof(mVUinfo));
+		std::memset(&mVUregsTemp, 0, sizeof(mVUregsTemp));
 		mVUincCycles(mVU, 100); // Ensures Valid P/Q instances (And sets all cycle data to 0)
 		mVUcycles -= 100;
 		qInst = mVU.q;
@@ -251,7 +240,8 @@ void mVUendProgram(mV, microFlagCycles* mFC, int isEbit)
 
 	if ((isEbit && isEbit != 3)) // Clear 'is busy' Flags
 	{
-		xMOV(ptr32[&mVU.regs().nextBlockCycles], 0);
+		if (EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Gamefixes.FullVU0SyncHack)
+			xMOV(ptr32[&mVU.regs().nextBlockCycles], 0);
 		if (!mVU.index || !THREAD_VU1)
 		{
 			xAND(ptr32[&VU0.VI[REG_VPU_STAT].UL], (isVU1 ? ~0x100 : ~0x001)); // VBS0/VBS1 flag
@@ -259,7 +249,8 @@ void mVUendProgram(mV, microFlagCycles* mFC, int isEbit)
 	}
 	else if(isEbit)
 	{
-		xMOV(ptr32[&mVU.regs().nextBlockCycles], 0);
+		if (EmuConfig.Gamefixes.VUSyncHack || EmuConfig.Gamefixes.FullVU0SyncHack)
+			xMOV(ptr32[&mVU.regs().nextBlockCycles], 0);
 	}
 
 	if (isEbit != 2 && isEbit != 3) // Save PC, and Jump to Exit Point
@@ -287,7 +278,7 @@ void normBranchCompile(microVU& mVU, u32 branchPC)
 {
 	microBlock* pBlock;
 	blockCreate(branchPC / 8);
-	pBlock = mVUblocks[branchPC / 8]->search((microRegInfo*)&mVUregs);
+	pBlock = mVUblocks[branchPC / 8]->search(mVU, (microRegInfo*)&mVUregs);
 	if (pBlock)
 		xJMP(pBlock->x86ptrStart);
 	else
@@ -340,10 +331,12 @@ void normJumpCompile(mV, microFlagCycles& mFC, bool isEvilJump)
 
 void normBranch(mV, microFlagCycles& mFC)
 {
-
 	// E-bit or T-Bit or D-Bit Branch
 	if (mVUup.dBit && doDBitHandling)
 	{
+		// Flush register cache early to avoid double flush on both paths
+		mVU.regAlloc->flushAll(false);
+
 		u32 tempPC = iPC;
 		if (mVU.index && THREAD_VU1)
 			xTEST(ptr32[&vu1Thread.vuFBRST], (isVU1 ? 0x400 : 0x4));
@@ -362,6 +355,9 @@ void normBranch(mV, microFlagCycles& mFC)
 	}
 	if (mVUup.tBit)
 	{
+		// Flush register cache early to avoid double flush on both paths
+		mVU.regAlloc->flushAll(false);
+
 		u32 tempPC = iPC;
 		if (mVU.index && THREAD_VU1)
 			xTEST(ptr32[&vu1Thread.vuFBRST], (isVU1 ? 0x800 : 0x8));
@@ -382,12 +378,11 @@ void normBranch(mV, microFlagCycles& mFC)
 	{
 		DevCon.Warning("M-Bit on normal branch, report if broken");
 		u32 tempPC = iPC;
-		u32* cpS = (u32*)&mVUregs;
-		u32* lpS = (u32*)&mVU.prog.lpState;
-		for (size_t i = 0; i < (sizeof(microRegInfo) - 4) / 4; i++, lpS++, cpS++)
-		{
-			xMOV(ptr32[lpS], cpS[0]);
-		}
+
+		memcpy(&mVUpBlock->pStateEnd, &mVUregs, sizeof(microRegInfo));
+		xLoadFarAddr(rax, &mVUpBlock->pStateEnd);
+		xCALL((void*)mVU.copyPLState);
+
 		mVUsetupBranch(mVU, mFC);
 		mVUendProgram(mVU, &mFC, 3);
 		iPC = branchAddr(mVU) / 4;
@@ -478,12 +473,11 @@ void condBranch(mV, microFlagCycles& mFC, int JMPcc)
 	if (mVUup.mBit)
 	{
 		u32 tempPC = iPC;
-		u32* cpS = (u32*)&mVUregs;
-		u32* lpS = (u32*)&mVU.prog.lpState;
-		for (size_t i = 0; i < (sizeof(microRegInfo) - 4) / 4; i++, lpS++, cpS++)
-		{
-			xMOV(ptr32[lpS], cpS[0]);
-		}
+
+		memcpy(&mVUpBlock->pStateEnd, &mVUregs, sizeof(microRegInfo));
+		xLoadFarAddr(rax, &mVUpBlock->pStateEnd);
+		xCALL((void*)mVU.copyPLState);
+
 		mVUendProgram(mVU, &mFC, 3);
 		xCMP(ptr16[&mVU.branch], 0);
 		xForwardJump32 dJMP((JccComparisonType)JMPcc);
@@ -534,7 +528,7 @@ void condBranch(mV, microFlagCycles& mFC, int JMPcc)
 		microBlock* bBlock;
 		incPC2(1); // Check if Branch Non-Taken Side has already been recompiled
 		blockCreate(iPC / 2);
-		bBlock = mVUblocks[iPC / 2]->search((microRegInfo*)&mVUregs);
+		bBlock = mVUblocks[iPC / 2]->search(mVU, (microRegInfo*)&mVUregs);
 		incPC2(-1);
 		if (bBlock) // Branch non-taken has already been compiled
 		{
@@ -546,15 +540,16 @@ void condBranch(mV, microFlagCycles& mFC, int JMPcc)
 		{
 			s32* ajmp = xJcc32((JccComparisonType)JMPcc);
 			u32 bPC = iPC; // mVUcompile can modify iPC, mVUpBlock, and mVUregs so back them up
-			microBlock* pBlock = mVUpBlock;
-			memcpy(&pBlock->pStateEnd, &mVUregs, sizeof(microRegInfo));
+
+			microRegInfo regBackup;
+			memcpy(&regBackup, &mVUregs, sizeof(microRegInfo));
 
 			incPC2(1); // Get PC for branch not-taken
 			mVUcompile(mVU, xPC, (uptr)&mVUregs);
 
 			iPC = bPC;
 			incPC(-3); // Go back to branch opcode (to get branch imm addr)
-			uptr jumpAddr = (uptr)mVUblockFetch(mVU, branchAddr(mVU), (uptr)&pBlock->pStateEnd);
+			uptr jumpAddr = (uptr)mVUblockFetch(mVU, branchAddr(mVU), (uptr)&regBackup);
 			*ajmp = (jumpAddr - ((uptr)ajmp + 4));
 		}
 	}
@@ -581,6 +576,9 @@ void normJump(mV, microFlagCycles& mFC)
 	}
 	if (mVUup.dBit && doDBitHandling)
 	{
+		// Flush register cache early to avoid double flush on both paths
+		mVU.regAlloc->flushAll(false);
+
 		if (THREAD_VU1)
 			xTEST(ptr32[&vu1Thread.vuFBRST], (isVU1 ? 0x400 : 0x4));
 		else
@@ -599,6 +597,9 @@ void normJump(mV, microFlagCycles& mFC)
 	}
 	if (mVUup.tBit)
 	{
+		// Flush register cache early to avoid double flush on both paths
+		mVU.regAlloc->flushAll(false);
+
 		if (mVU.index && THREAD_VU1)
 			xTEST(ptr32[&vu1Thread.vuFBRST], (isVU1 ? 0x800 : 0x8));
 		else

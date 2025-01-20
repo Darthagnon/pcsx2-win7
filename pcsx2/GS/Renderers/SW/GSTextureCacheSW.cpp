@@ -1,20 +1,11 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
-#include "GSTextureCacheSW.h"
+#include "GS/Renderers/SW/GSTextureCacheSW.h"
+#include "GS/GSExtra.h"
+#include "GS/GSPerfMon.h"
+#include "GS/GSPng.h"
+#include "GS/GSUtil.h"
 
 GSTextureCacheSW::GSTextureCacheSW() = default;
 
@@ -59,7 +50,7 @@ GSTextureCacheSW::Texture* GSTextureCacheSW::Lookup(const GIFRegTEX0& TEX0, cons
 
 	m_textures.insert(t);
 
-	t->m_pages.loopPages([&](u32 page)
+	t->m_pages.loopPages([this, t](u32 page)
 	{
 		t->m_erase_it[page] = m_map[page].InsertFront(t);
 	});
@@ -69,7 +60,7 @@ GSTextureCacheSW::Texture* GSTextureCacheSW::Lookup(const GIFRegTEX0& TEX0, cons
 
 void GSTextureCacheSW::InvalidatePages(const GSOffset::PageLooper& pages, u32 psm)
 {
-	pages.loopPages([&](u32 page)
+	pages.loopPages([this, psm](u32 page)
 	{
 		for (Texture* t : m_map[page])
 		{
@@ -112,13 +103,13 @@ void GSTextureCacheSW::IncAge()
 {
 	for (auto i = m_textures.begin(); i != m_textures.end();)
 	{
-		Texture* t = *i;
+		Texture* const t = *i;
 
 		if (++t->m_age > 10)
 		{
 			i = m_textures.erase(i);
 
-			t->m_pages.loopPages([&](u32 page)
+			t->m_pages.loopPages([this, t](u32 page)
 			{
 				m_map[page].EraseIndex(t->m_erase_it[page]);
 			});
@@ -135,15 +126,14 @@ void GSTextureCacheSW::IncAge()
 //
 
 GSTextureCacheSW::Texture::Texture(u32 tw0, const GIFRegTEX0& TEX0, const GIFRegTEXA& TEXA)
-	: m_buff(NULL)
+	: m_TEX0(TEX0)
+	, m_TEXA(TEXA)
+	, m_buff(nullptr)
 	, m_tw(tw0)
 	, m_age(0)
 	, m_complete(false)
-	, m_p2t(NULL)
+	, m_p2t(nullptr)
 {
-	m_TEX0 = TEX0;
-	m_TEXA = TEXA;
-
 	if (m_tw == 0)
 	{
 		m_tw = std::max<int>(m_TEX0.TW, GSLocalMemory::m_psm[m_TEX0.PSM].pal == 0 ? 3 : 5); // makes one row 32 bytes at least, matches the smallest block size that is allocated for m_buff
@@ -172,6 +162,41 @@ GSTextureCacheSW::Texture::~Texture()
 	}
 }
 
+void GSTextureCacheSW::Texture::Reset(u32 tw0, const GIFRegTEX0& TEX0, const GIFRegTEXA& TEXA)
+{
+	if (m_buff && (m_TEX0.TW != TEX0.TW || m_TEX0.TH != TEX0.TH))
+	{
+		_aligned_free(m_buff);
+		m_buff = nullptr;
+	}
+
+	m_tw = tw0;
+	m_age = 0;
+	m_complete = false;
+	m_p2t = nullptr;
+	m_TEX0 = TEX0;
+	m_TEXA = TEXA;
+
+	if (m_tw == 0)
+	{
+		m_tw = std::max<int>(m_TEX0.TW, GSLocalMemory::m_psm[m_TEX0.PSM].pal == 0 ? 3 : 5); // makes one row 32 bytes at least, matches the smallest block size that is allocated for m_buff
+	}
+
+	memset(m_valid, 0, sizeof(m_valid));
+
+	m_sharedbits = GSUtil::HasSharedBitsPtr(m_TEX0.PSM);
+
+	m_offset = g_gs_renderer->m_mem.GetOffset(TEX0.TBP0, TEX0.TBW, TEX0.PSM);
+	m_pages = m_offset.pageLooperForRect(GSVector4i(0, 0, 1 << TEX0.TW, 1 << TEX0.TH));
+
+	m_repeating = m_TEX0.IsRepeating(); // repeating mode always works, it is just slightly slower
+
+	if (m_repeating)
+	{
+		m_p2t = g_gs_renderer->m_mem.GetPage2TileMap(m_TEX0);
+	}
+}
+
 bool GSTextureCacheSW::Texture::Update(const GSVector4i& rect)
 {
 	if (m_complete)
@@ -197,16 +222,18 @@ bool GSTextureCacheSW::Texture::Update(const GSVector4i& rect)
 		m_complete = true; // lame, but better than nothing
 	}
 
-	if (m_buff == NULL)
+	if (!m_buff)
 	{
-		u32 pitch = (1 << m_tw) << shift;
+		const u32 pitch = (1 << m_tw) << shift;
+		const size_t size = pitch * th * 4;
 
-		m_buff = _aligned_malloc(pitch * th * 4, 32);
-
-		if (m_buff == NULL)
-		{
+		m_buff = _aligned_malloc(size, VECTOR_ALIGNMENT);
+		if (!m_buff)
 			return false;
-		}
+
+		// This _shouldn't_ be necessary, but apparently our texture min/max is wrong somewhere,
+		// and we end up sampling from "random" malloc memory, which breaks GS dump runs.
+		std::memset(m_buff, 0, size);
 	}
 
 	GSLocalMemory& mem = g_gs_renderer->m_mem;
@@ -245,7 +272,7 @@ bool GSTextureCacheSW::Texture::Update(const GSVector4i& rect)
 				{
 					m_valid[row] |= col;
 
-					(mem.*rtxbP)(block, &dst[bn.blkX() << shift], pitch, m_TEXA);
+					rtxbP(mem, block, &dst[bn.blkX() << shift], pitch, m_TEXA);
 
 					blocks++;
 				}
@@ -267,7 +294,7 @@ bool GSTextureCacheSW::Texture::Update(const GSVector4i& rect)
 				{
 					m_valid[row] |= col;
 
-					(mem.*rtxbP)(block, &dst[bn.blkX() << shift], pitch, m_TEXA);
+					rtxbP(mem, block, &dst[bn.blkX() << shift], pitch, m_TEXA);
 
 					blocks++;
 				}
@@ -283,45 +310,36 @@ bool GSTextureCacheSW::Texture::Update(const GSVector4i& rect)
 	return true;
 }
 
-#include "GSTextureSW.h"
-
-bool GSTextureCacheSW::Texture::Save(const std::string& fn, bool dds) const
+bool GSTextureCacheSW::Texture::Save(const std::string& fn) const
 {
 	const u32* RESTRICT clut = g_gs_renderer->m_mem.m_clut;
 
-	int w = 1 << m_TEX0.TW;
-	int h = 1 << m_TEX0.TH;
+	const u32 w = 1 << m_TEX0.TW;
+	const u32 h = 1 << m_TEX0.TH;
 
-	GSTextureSW t(GSTexture::Type::Invalid, w, h);
-
-	GSTexture::GSMap m;
-
-	if (t.Map(m, NULL))
+	constexpr GSPng::Format format = IsDevBuild ? GSPng::RGB_A_PNG : GSPng::RGB_PNG;
+	const GSLocalMemory::psm_t& psm = GSLocalMemory::m_psm[m_TEX0.PSM];
+	const u8* RESTRICT src = (u8*)m_buff;
+	const u32 src_pitch = 1u << (m_tw + (psm.pal == 0 ? 2 : 0));
+	if (psm.pal == 0)
 	{
-		const GSLocalMemory::psm_t& psm = GSLocalMemory::m_psm[m_TEX0.PSM];
+		// no clut => dump directly
+		return GSPng::Save(format, fn, src, w, h, src_pitch, GSConfig.PNGCompressionLevel);
+	}
+	else
+	{
+		const std::unique_ptr<u32[]> dumptex = std::make_unique<u32[]>(w * h);
+		u32* dst = dumptex.get();
 
-		const u8* RESTRICT src = (u8*)m_buff;
-		int pitch = 1 << (m_tw + (psm.pal == 0 ? 2 : 0));
-
-		for (int j = 0; j < h; j++, src += pitch, m.bits += m.pitch)
+		for (u32 j = 0; j < h; j++)
 		{
-			if (psm.pal == 0)
-			{
-				memcpy(m.bits, src, sizeof(u32) * w);
-			}
-			else
-			{
-				for (int i = 0; i < w; i++)
-				{
-					((u32*)m.bits)[i] = clut[src[i]];
-				}
-			}
+			for (u32 i = 0; i < w; i++)
+				*(dst++) = clut[src[i]];
+
+			src += src_pitch;
 		}
 
-		t.Unmap();
-
-		return t.Save(fn);
+		return GSPng::Save(format, fn, reinterpret_cast<const u8*>(dumptex.get()),
+			w, h, w * sizeof(u32), GSConfig.PNGCompressionLevel);
 	}
-
-	return false;
 }

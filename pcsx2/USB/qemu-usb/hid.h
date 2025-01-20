@@ -1,21 +1,8 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-2.0+
 
-#ifndef QEMU_HID_H
-#define QEMU_HID_H
-#include "vl.h"
+#pragma once
+#include <cstdint>
 
 /* include/ui/console.h */
 /* keyboard/mouse support */
@@ -31,8 +18,6 @@
 #define HID_MOUSE 1
 #define HID_TABLET 2
 #define HID_KEYBOARD 3
-// idk
-#define HID_SUBKIND_BEATMANIA 1
 
 /* scancode without modifiers */
 #define SCANCODE_KEYMASK 0xff
@@ -325,11 +310,8 @@ struct HIDState
 	uint32_t head; /* index into circular queue */
 	uint32_t n;
 	int kind;
-	int sub_kind;
 	int32_t protocol;
 	uint8_t idle;
-	bool idle_pending;
-	//QEMUTimer *idle_timer;
 	HIDEventFunc event;
 };
 
@@ -343,5 +325,3 @@ void hid_pointer_activate(HIDState* hs);
 int hid_pointer_poll(HIDState* hs, uint8_t* buf, int len);
 int hid_keyboard_poll(HIDState* hs, uint8_t* buf, int len);
 int hid_keyboard_write(HIDState* hs, uint8_t* buf, int len);
-
-#endif /* QEMU_HID_H */

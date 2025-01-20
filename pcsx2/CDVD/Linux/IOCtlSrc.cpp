@@ -1,26 +1,13 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "CDVD/CDVDdiscReader.h"
 #include "CDVD/CDVD.h"
 
-#ifdef __linux__
-#include <linux/cdrom.h>
-#endif
+#include "common/Error.h"
+#include "common/Console.h"
 
+#include <linux/cdrom.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -29,11 +16,9 @@
 #include <climits>
 #include <cstring>
 
-IOCtlSrc::IOCtlSrc(decltype(m_filename) filename)
-	: m_filename(filename)
+IOCtlSrc::IOCtlSrc(std::string filename)
+	: m_filename(std::move(filename))
 {
-	if (!Reopen())
-		throw std::runtime_error(" * CDVD: Error opening source.\n");
 }
 
 IOCtlSrc::~IOCtlSrc()
@@ -45,7 +30,7 @@ IOCtlSrc::~IOCtlSrc()
 	}
 }
 
-bool IOCtlSrc::Reopen()
+bool IOCtlSrc::Reopen(Error* error)
 {
 	if (m_device != -1)
 		close(m_device);
@@ -54,7 +39,10 @@ bool IOCtlSrc::Reopen()
 	// drive is empty. Probably does other things too.
 	m_device = open(m_filename.c_str(), O_RDONLY | O_NONBLOCK);
 	if (m_device == -1)
+	{
+		Error::SetErrno(error, errno);
 		return false;
+	}
 
 	// DVD detection MUST be first on Linux - The TOC ioctls work for both
 	// CDs and DVDs.
@@ -108,7 +96,6 @@ bool IOCtlSrc::ReadSectors2048(u32 sector, u32 count, u8* buffer) const
 
 bool IOCtlSrc::ReadSectors2352(u32 sector, u32 count, u8* buffer) const
 {
-#ifdef __linux__
 	union
 	{
 		cdrom_msf msf;
@@ -130,14 +117,10 @@ bool IOCtlSrc::ReadSectors2352(u32 sector, u32 count, u8* buffer) const
 	}
 
 	return true;
-#else
-	return false;
-#endif
 }
 
 bool IOCtlSrc::ReadDVDInfo()
 {
-#ifdef __linux__
 	dvd_struct dvdrs;
 	dvdrs.type = DVD_STRUCT_PHYSICAL;
 	dvdrs.physical.layer_num = 0;
@@ -180,14 +163,10 @@ bool IOCtlSrc::ReadDVDInfo()
 	}
 
 	return true;
-#else
-	return false;
-#endif
 }
 
 bool IOCtlSrc::ReadCDInfo()
 {
-#ifdef __linux__
 	cdrom_tochdr header;
 
 	if (ioctl(m_device, CDROMREADTOCHDR, &header) == -1)
@@ -214,14 +193,29 @@ bool IOCtlSrc::ReadCDInfo()
 	m_media_type = -1;
 
 	return true;
-#else
-	return false;
-#endif
 }
+
+bool IOCtlSrc::ReadTrackSubQ(cdvdSubQ* subQ) const
+{
+	cdrom_subchnl osSubQ;
+
+	osSubQ.cdsc_format = CDROM_MSF;
+
+	if (ioctl(m_device, CDROMSUBCHNL, &osSubQ) == -1)
+	{
+		Console.Error("SUB CHANNEL READ ERROR: %s\n", strerror(errno));
+		return false;
+	}
+
+	subQ->adr = osSubQ.cdsc_adr;
+	subQ->trackNum = osSubQ.cdsc_trk;
+	subQ->trackIndex = osSubQ.cdsc_ind;
+	return true;
+}
+
 
 bool IOCtlSrc::DiscReady()
 {
-#ifdef __linux__
 	if (m_device == -1)
 		return false;
 
@@ -229,7 +223,7 @@ bool IOCtlSrc::DiscReady()
 	if (ioctl(m_device, CDROM_DRIVE_STATUS, CDSL_CURRENT) == CDS_DISC_OK)
 	{
 		if (!m_sectors)
-			Reopen();
+			Reopen(nullptr);
 	}
 	else
 	{
@@ -239,7 +233,4 @@ bool IOCtlSrc::DiscReady()
 	}
 
 	return !!m_sectors;
-#else
-	return false;
-#endif
 }

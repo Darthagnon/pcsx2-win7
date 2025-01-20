@@ -1,23 +1,13 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "GLState.h"
+
+#include <array>
 
 namespace GLState
 {
+	GLuint vao;
 	GLuint fbo;
 	GSVector2i viewport;
 	GSVector4i scissor;
@@ -29,6 +19,8 @@ namespace GLState
 	u16 eq_RGB;
 	u16 f_sRGB;
 	u16 f_dRGB;
+	u16 f_sA;
+	u16 f_dA;
 	u8 bf;
 	u8 wrgba;
 
@@ -42,15 +34,14 @@ namespace GLState
 
 	GLuint ps_ss;
 
-	GLuint rt;
-	GLuint ds;
+	GSTextureOGL* rt = nullptr;
+	GSTextureOGL* ds = nullptr;
 	GLuint tex_unit[8];
 	GLuint64 tex_handle[8];
 
-	s64 available_vram;
-
 	void Clear()
 	{
+		vao = 0;
 		fbo = 0;
 		viewport = GSVector2i(1, 1);
 		scissor = GSVector4i(0, 0, 1, 1);
@@ -59,6 +50,8 @@ namespace GLState
 		eq_RGB = GL_FUNC_ADD;
 		f_sRGB = GL_ONE;
 		f_dRGB = GL_ZERO;
+		f_sA = GL_ONE;
+		f_dA = GL_ZERO;
 		bf = 0;
 		wrgba = 0xF;
 
@@ -72,13 +65,9 @@ namespace GLState
 
 		ps_ss = 0;
 
-		rt = 0;
-		ds = 0;
+		rt = nullptr;
+		ds = nullptr;
 		std::fill(std::begin(tex_unit), std::end(tex_unit), 0);
 		std::fill(std::begin(tex_handle), std::end(tex_handle), 0);
-
-		// Set a max vram limit for texture allocation
-		// (256MB are reserved for PBO/IBO/VBO/UBO buffers)
-		available_vram = (4096u - 256u) * 1024u * 1024u;
 	}
 } // namespace GLState

@@ -1,21 +1,10 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
 #include "DEV9/net.h"
+#include "MAC_Address.h"
 #include "Payload.h"
 
 namespace PacketReader
@@ -34,8 +23,8 @@ namespace PacketReader
 	class EthernetFrame
 	{
 	public:
-		u8 destinationMAC[6] = {0};
-		u8 sourceMAC[6] = {0};
+		MAC_Address destinationMAC{};
+		MAC_Address sourceMAC{};
 
 		u16 protocol = 0;
 		int headerLength = 14;

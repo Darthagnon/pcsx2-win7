@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 #include "common/WindowInfo.h"
@@ -19,6 +7,8 @@
 #include <QtWidgets/QWidget>
 #include <optional>
 #include <vector>
+
+class QCloseEvent;
 
 class DisplayWidget final : public QWidget
 {
@@ -30,19 +20,18 @@ public:
 
 	QPaintEngine* paintEngine() const override;
 
-	__fi void setShouldHideCursor(bool hide) { m_should_hide_cursor = hide; }
-
 	int scaledWindowWidth() const;
 	int scaledWindowHeight() const;
-	qreal devicePixelRatioFromScreen() const;
 
 	std::optional<WindowInfo> getWindowInfo();
 
-	void updateRelativeMode(bool master_enable);
-	void updateCursor(bool master_enable);
+	void updateRelativeMode(bool enabled);
+	void updateCursor(bool hidden);
+
+	void handleCloseEvent(QCloseEvent* event);
+	void destroy();
 
 Q_SIGNALS:
-	void windowFocusEvent();
 	void windowResizedEvent(int width, int height, float scale);
 	void windowRestoredEvent();
 
@@ -50,6 +39,7 @@ protected:
 	bool event(QEvent* event) override;
 
 private:
+	bool isActuallyFullscreen() const;
 	void updateCenterPos();
 
 	QPoint m_relative_mouse_start_pos{};
@@ -58,8 +48,8 @@ private:
 #ifdef _WIN32
 	bool m_clip_mouse_enabled = false;
 #endif
-	bool m_should_hide_cursor = false;
 	bool m_cursor_hidden = false;
+	bool m_destroying = false;
 
 	std::vector<int> m_keys_pressed_with_modifiers;
 
@@ -76,7 +66,10 @@ public:
 	DisplayContainer();
 	~DisplayContainer();
 
-	static bool IsNeeded(bool fullscreen, bool render_to_main);
+	// Wayland is broken in lots of ways, so we need to check for it.
+	static bool isRunningOnWayland();
+
+	static bool isNeeded(bool fullscreen, bool render_to_main);
 
 	void setDisplayWidget(DisplayWidget* widget);
 	DisplayWidget* removeDisplayWidget();

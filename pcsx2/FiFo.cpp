@@ -1,24 +1,11 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-
-#include "PrecompiledHeader.h"
 #include "Common.h"
 
 #include "Gif.h"
 #include "Gif_Unit.h"
+#include "MTGS.h"
 #include "Vif.h"
 #include "Vif_Dma.h"
 
@@ -51,7 +38,7 @@ void ReadFIFO_VIF1(mem128_t* out)
 		}
 		if (vif1Regs.stat.FQC > 0)
 		{
-			GetMTGS().InitAndReadFIFO(reinterpret_cast<u8*>(out), 1);
+			MTGS::InitAndReadFIFO(reinterpret_cast<u8*>(out), 1);
 			vif1.GSLastDownloadSize--;
 			GUNIT_LOG("ReadFIFO_VIF1");
 			if (vif1.GSLastDownloadSize <= 16)
@@ -73,7 +60,7 @@ void WriteFIFO_VIF0(const mem128_t* value)
 	vif0ch.qwc += 1;
 	if (vif0.irqoffset.value != 0 && vif0.vifstalled.enabled)
 		DevCon.Warning("Offset on VIF0 FIFO start!");
-	bool ret = VIF0transfer((u32*)value, 4);
+	[[maybe_unused]] bool ret = VIF0transfer((u32*)value, 4);
 
 	if (vif0.cmd)
 	{
@@ -85,7 +72,7 @@ void WriteFIFO_VIF0(const mem128_t* value)
 		vif0Regs.stat.VPS = VPS_IDLE;
 	}
 
-	pxAssertDev(ret, "vif stall code not implemented");
+	pxAssertMsg(ret, "vif stall code not implemented");
 }
 
 void WriteFIFO_VIF1(const mem128_t* value)
@@ -105,7 +92,7 @@ void WriteFIFO_VIF1(const mem128_t* value)
 		DevCon.Warning("Offset on VIF1 FIFO start!");
 	}
 
-	bool ret = VIF1transfer((u32*)value, 4);
+	[[maybe_unused]] bool ret = VIF1transfer((u32*)value, 4);
 
 	if (vif1.cmd)
 	{
@@ -125,7 +112,7 @@ void WriteFIFO_VIF1(const mem128_t* value)
 			gifUnit.Execute(false, true);
 	}
 
-	pxAssertDev(ret, "vif stall code not implemented");
+	pxAssertMsg(ret, "vif stall code not implemented");
 }
 
 void WriteFIFO_GIF(const mem128_t* value)

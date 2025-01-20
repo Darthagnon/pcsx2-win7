@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -22,6 +10,7 @@
 #include "DEV9/PacketReader/IP/UDP/UDP_Packet.h"
 
 #ifdef _WIN32
+#include "common/RedtapeWindows.h"
 #include <winsock2.h>
 #include <iphlpapi.h>
 #elif defined(__POSIX__)
@@ -41,9 +30,9 @@ namespace InternalServers
 	private:
 		std::function<void()> callback;
 
-		PacketReader::IP::IP_Address dns1{0};
-		PacketReader::IP::IP_Address dns2{0};
-		PacketReader::IP::IP_Address netmask{0};
+		PacketReader::IP::IP_Address dns1{};
+		PacketReader::IP::IP_Address dns2{};
+		PacketReader::IP::IP_Address netmask{};
 
 		SimpleQueue<PacketReader::IP::UDP::UDP_Packet*> recvBuff;
 
@@ -53,9 +42,9 @@ namespace InternalServers
 		DHCP_Server(std::function<void()> receivedcallback);
 
 #ifdef _WIN32
-		void Init(PIP_ADAPTER_ADDRESSES adapter, PacketReader::IP::IP_Address ipOverride = {0}, PacketReader::IP::IP_Address subnetOverride = {0}, PacketReader::IP::IP_Address gatewayOvveride = {0});
+		void Init(PIP_ADAPTER_ADDRESSES adapter, PacketReader::IP::IP_Address ipOverride = {}, PacketReader::IP::IP_Address subnetOverride = {}, PacketReader::IP::IP_Address gatewayOvveride = {});
 #elif defined(__POSIX__)
-		void Init(ifaddrs* adapter, PacketReader::IP::IP_Address ipOverride = {0}, PacketReader::IP::IP_Address subnetOverride = {0}, PacketReader::IP::IP_Address gatewayOvveride = {0});
+		void Init(ifaddrs* adapter, PacketReader::IP::IP_Address ipOverride = {}, PacketReader::IP::IP_Address subnetOverride = {}, PacketReader::IP::IP_Address gatewayOvveride = {});
 #endif
 
 		PacketReader::IP::UDP::UDP_Packet* Recv();

@@ -1,22 +1,9 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
 #include "Vif_Dma.h"
-#include "newVif.h"
+#include "Vif_Dynarec.h"
 
 //------------------------------------------------------------------
 // VifCode Transfer Interpreter (Vif0/Vif1)
@@ -27,7 +14,7 @@ _vifT void vifTransferLoop(u32* &data) {
 	vifStruct& vifX = GetVifX;
 
 	u32& pSize = vifX.vifpacketsize;
-	
+
 	int ret = 0;
 
 	vifXRegs.stat.VPS |= VPS_TRANSFERRING;
@@ -39,7 +26,7 @@ _vifT void vifTransferLoop(u32* &data) {
 
 			if(!vifXRegs.err.MII)
 			{
-				if(vifX.irq && !CHECK_VIF1STALLHACK) 
+				if(vifX.irq && !CHECK_VIF1STALLHACK)
 					break;
 
 				vifX.irq      |= data[0] >> 31;
@@ -47,10 +34,10 @@ _vifT void vifTransferLoop(u32* &data) {
 
 			vifXRegs.code = data[0];
 			vifX.cmd	  = data[0] >> 24;
-			
-			
+
+
 			VIF_LOG("New VifCMD %x tagsize %x irq %d", vifX.cmd, vifX.tag.size, vifX.irq);
-			if (IsDevBuild && SysTrace.EE.VIFcode.IsActive()) {
+			if (IsDevBuild && TraceLogging.EE.VIFcode.IsActive()) {
 				// Pass 2 means "log it"
 				vifCmdHandler[idx][vifX.cmd & 0x7f](2, data);
 			}
@@ -73,7 +60,7 @@ _vifT static __fi bool vifTransfer(u32 *data, int size, bool TTE) {
 
 	// irqoffset necessary to add up the right qws, or else will spin (spiderman)
 	int transferred = vifX.irqoffset.enabled ? vifX.irqoffset.value : 0;
-	
+
 	vifX.vifpacketsize = size;
 	vifTransferLoop<idx>(data);
 
@@ -85,13 +72,13 @@ _vifT static __fi bool vifTransfer(u32 *data, int size, bool TTE) {
 	else	  g_vif1Cycles += std::max(1, (int)((transferred * BIAS) >> 2));
 
 	vifX.irqoffset.value = transferred % 4; // cannot lose the offset
-	
+
 	if (vifX.irq && vifX.cmd == 0) {
 		VIF_LOG("Vif%d IRQ Triggering", idx);
 		//Always needs to be set to return to the correct offset if there is data left.
 		vifX.vifstalled.enabled = VifStallEnable(vifXch);
 		vifX.vifstalled.value = VIF_IRQ_STALL;
-	}	
+	}
 
 	if (!TTE) // *WARNING* - Tags CAN have interrupts! so lets just ignore the dma modifying stuffs (GT4)
 	{
@@ -104,9 +91,9 @@ _vifT static __fi bool vifTransfer(u32 *data, int size, bool TTE) {
 
 		vifX.irqoffset.enabled = false;
 
-		if(!vifXch.qwc) 
+		if(!vifXch.qwc)
 			vifX.inprogress &= ~0x1;
-		else if(vifX.irqoffset.value != 0) 
+		else if(vifX.irqoffset.value != 0)
 			vifX.irqoffset.enabled = true;
 	}
 	else

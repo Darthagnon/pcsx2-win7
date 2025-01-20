@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -28,6 +16,7 @@
 #define PAGE_SIZE 8192u
 #define BLOCK_SIZE 256u
 #define COLUMN_SIZE 64u
+#define BLOCKS_PER_PAGE (PAGE_SIZE / BLOCK_SIZE)
 
 #define MAX_PAGES (VM_SIZE / PAGE_SIZE)
 #define MAX_BLOCKS (VM_SIZE / BLOCK_SIZE)
@@ -157,20 +146,20 @@ enum GIF_FLG
 
 enum GS_PSM
 {
-	PSM_PSMCT32  =  0, // 0000-0000
-	PSM_PSMCT24  =  1, // 0000-0001
-	PSM_PSMCT16  =  2, // 0000-0010
-	PSM_PSMCT16S = 10, // 0000-1010
-	PSM_PSGPU24  = 18, // 0001-0010
-	PSM_PSMT8    = 19, // 0001-0011
-	PSM_PSMT4    = 20, // 0001-0100
-	PSM_PSMT8H   = 27, // 0001-1011
-	PSM_PSMT4HL  = 36, // 0010-0100
-	PSM_PSMT4HH  = 44, // 0010-1100
-	PSM_PSMZ32   = 48, // 0011-0000
-	PSM_PSMZ24   = 49, // 0011-0001
-	PSM_PSMZ16   = 50, // 0011-0010
-	PSM_PSMZ16S  = 58, // 0011-1010
+	PSMCT32  =  0, // 0000-0000
+	PSMCT24  =  1, // 0000-0001
+	PSMCT16  =  2, // 0000-0010
+	PSMCT16S = 10, // 0000-1010
+	PSGPU24  = 18, // 0001-0010
+	PSMT8    = 19, // 0001-0011
+	PSMT4    = 20, // 0001-0100
+	PSMT8H   = 27, // 0001-1011
+	PSMT4HL  = 36, // 0010-0100
+	PSMT4HH  = 44, // 0010-1100
+	PSMZ32   = 48, // 0011-0000
+	PSMZ24   = 49, // 0011-0001
+	PSMZ16   = 50, // 0011-0010
+	PSMZ16S  = 58, // 0011-1010
 };
 
 enum GS_TFX
@@ -273,7 +262,6 @@ union name          \
 #define REG128_SET(name) \
 	union name           \
 	{                    \
-		__m128i m128;    \
 		u64 U64[2];   \
 		u32 U32[4];
 
@@ -536,10 +524,18 @@ REG64_(GIFReg, ALPHA)
 	u8 FIX;
 	u8 _PAD2[3];
 REG_END2
-	// opaque => output will be Cs/As
+	// opaque => output will be Cs/As/zero
 	__forceinline bool IsOpaque() const { return ((A == B || (C == 2 && FIX == 0)) && D == 0) || (A == 0 && B == D && C == 2 && FIX == 0x80); }
 	__forceinline bool IsOpaque(int amin, int amax) const { return ((A == B || amax == 0) && D == 0) || (A == 0 && B == D && amin == 0x80 && amax == 0x80); }
-	__forceinline bool IsCd() { return (A == B) && (D == 1); }
+	__forceinline bool IsCd() const { return (A == B) && (D == 1); }
+
+	// output will be Cd, Cs is discarded
+	__forceinline bool IsCdOutput() const { return (C == 2 && D != 1 && FIX == 0x00); }
+	__forceinline bool IsCdInBlend() const { return (A == 1 || B == 1 || D == 1); }
+	__forceinline bool IsUsingCs() const { return (A == 0 || B == 0 || D == 0); }
+	__forceinline bool IsUsingAs() const { return (A != B && C == 0); }
+
+	__forceinline bool IsBlack() const { return ((C == 2 && FIX == 0) || (A == 2 && A == B)) && D == 2; }
 REG_END2
 
 REG64_(GIFReg, BITBLTBUF)
@@ -786,6 +782,7 @@ REG_END2
 	__forceinline bool DoFirstPass() const { return !ATE || ATST != ATST_NEVER; } // not all pixels fail automatically
 	__forceinline bool DoSecondPass() const { return ATE && ATST != ATST_ALWAYS && AFAIL != AFAIL_KEEP; } // pixels may fail, write fb/z
 	__forceinline bool NoSecondPass() const { return ATE && ATST != ATST_ALWAYS && AFAIL == AFAIL_KEEP; } // pixels may fail, no output
+	__forceinline u32 GetAFAIL(u32 fpsm) const { return (AFAIL == AFAIL_RGB_ONLY && (fpsm & 0xF) != 0) ? static_cast<u32>(AFAIL_FB_ONLY) : AFAIL; } // FB Only when not 32bit Framebuffer
 REG_END2
 
 REG64_(GIFReg, TEX0)
@@ -818,16 +815,26 @@ union
 REG_END2
 	__forceinline bool IsRepeating() const
 	{
+		// This is actually "does the texture span more than one page".
 		if (TBW < 2)
 		{
-			if (PSM == PSM_PSMT8)
+			if (PSM == PSMT8)
 				return TW > 7 || TH > 6;
-			if (PSM == PSM_PSMT4)
+			if (PSM == PSMT4)
 				return TW > 7 || TH > 7;
 		}
 
 		// The recast of TBW seems useless but it avoid tons of warning from GCC...
 		return ((u32)TBW << 6u) < (1u << TW);
+	}
+
+	__forceinline static GIFRegTEX0 Create(u32 bp, u32 bw, u32 psm)
+	{
+		GIFRegTEX0 ret = {};
+		ret.TBP0 = bp;
+		ret.TBW = bw;
+		ret.PSM = psm;
+		return ret;
 	}
 REG_END2
 
@@ -1200,7 +1207,7 @@ struct alignas(32) GIFPath
 					case 16:
 						break;
 					default:
-						__assume(0);
+						ASSUME(0);
 				}
 			}
 		}
@@ -1290,122 +1297,6 @@ struct GSPrivRegSet
 
 		u8 _pad17[0x1000];
 	};
-
-	void Dump(FILE* fp)
-	{
-		for (int i = 0; i < 2; i++)
-		{
-			if (!fp)
-				return;
-
-			if (i == 0 && !PMODE.EN1)
-				continue;
-			if (i == 1 && !PMODE.EN2)
-				continue;
-
-			fprintf(fp, "DISPFB[%d] BP=%05x BW=%u PSM=%u DBX=%u DBY=%u\n",
-				i,
-				DISP[i].DISPFB.Block(),
-				DISP[i].DISPFB.FBW,
-				DISP[i].DISPFB.PSM,
-				DISP[i].DISPFB.DBX,
-				DISP[i].DISPFB.DBY);
-
-			fprintf(fp, "DISPLAY[%d] DX=%u DY=%u DW=%u DH=%u MAGH=%u MAGV=%u\n",
-				i,
-				DISP[i].DISPLAY.DX,
-				DISP[i].DISPLAY.DY,
-				DISP[i].DISPLAY.DW,
-				DISP[i].DISPLAY.DH,
-				DISP[i].DISPLAY.MAGH,
-				DISP[i].DISPLAY.MAGV);
-		}
-
-		fprintf(fp, "PMODE EN1=%u EN2=%u CRTMD=%u MMOD=%u AMOD=%u SLBG=%u ALP=%u\n",
-			PMODE.EN1,
-			PMODE.EN2,
-			PMODE.CRTMD,
-			PMODE.MMOD,
-			PMODE.AMOD,
-			PMODE.SLBG,
-			PMODE.ALP);
-
-		fprintf(fp, "SMODE1 CLKSEL=%u CMOD=%u EX=%u GCONT=%u LC=%u NVCK=%u PCK2=%u PEHS=%u PEVS=%u PHS=%u PRST=%u PVS=%u RC=%u SINT=%u SLCK=%u SLCK2=%u SPML=%u T1248=%u VCKSEL=%u VHP=%u XPCK=%u\n",
-			SMODE1.CLKSEL,
-			SMODE1.CMOD,
-			SMODE1.EX,
-			SMODE1.GCONT,
-			SMODE1.LC,
-			SMODE1.NVCK,
-			SMODE1.PCK2,
-			SMODE1.PEHS,
-			SMODE1.PEVS,
-			SMODE1.PHS,
-			SMODE1.PRST,
-			SMODE1.PVS,
-			SMODE1.RC,
-			SMODE1.SINT,
-			SMODE1.SLCK,
-			SMODE1.SLCK2,
-			SMODE1.SPML,
-			SMODE1.T1248,
-			SMODE1.VCKSEL,
-			SMODE1.VHP,
-			SMODE1.XPCK);
-
-		fprintf(fp, "SMODE2 INT=%u FFMD=%u DPMS=%u\n",
-			SMODE2.INT,
-			SMODE2.FFMD,
-			SMODE2.DPMS);
-
-		fprintf(fp, "SRFSH %08x_%08x\n",
-			SRFSH.U32[0],
-			SRFSH.U32[1]);
-
-		fprintf(fp, "SYNCH1 %08x_%08x\n",
-			SYNCH1.U32[0],
-			SYNCH1.U32[1]);
-
-		fprintf(fp, "SYNCH2 %08x_%08x\n",
-			SYNCH2.U32[0],
-			SYNCH2.U32[1]);
-
-		fprintf(fp, "SYNCV VBP=%u VBPE=%u VDP=%u VFP=%u VFPE=%u VS=%u\n",
-			SYNCV.VBP,
-			SYNCV.VBPE,
-			SYNCV.VDP,
-			SYNCV.VFP,
-			SYNCV.VFPE,
-			SYNCV.VS);
-
-		fprintf(fp, "CSR %08x_%08x\n",
-			CSR.U32[0],
-			CSR.U32[1]);
-
-		fprintf(fp, "BGCOLOR B=%u G=%u R=%u\n",
-			BGCOLOR.B,
-			BGCOLOR.G,
-			BGCOLOR.R);
-
-		fprintf(fp, "EXTBUF BP=0x%x BW=%u FBIN=%u WFFMD=%u EMODA=%u EMODC=%u WDX=%u WDY=%u\n",
-			EXTBUF.EXBP, EXTBUF.EXBW, EXTBUF.FBIN, EXTBUF.WFFMD,
-			EXTBUF.EMODA, EXTBUF.EMODC, EXTBUF.WDX, EXTBUF.WDY);
-
-		fprintf(fp, "EXTDATA SX=%u SY=%u SMPH=%u SMPV=%u WW=%u WH=%u\n",
-			EXTDATA.SX, EXTDATA.SY, EXTDATA.SMPH, EXTDATA.SMPV, EXTDATA.WW, EXTDATA.WH);
-
-		fprintf(fp, "EXTWRITE EN=%u\n", EXTWRITE.WRITE);
-	}
-
-	void Dump(const std::string& filename)
-	{
-		FILE* fp = fopen(filename.c_str(), "wt");
-		if (fp)
-		{
-			Dump(fp);
-			fclose(fp);
-		}
-	}
 };
 
 #pragma pack(pop)

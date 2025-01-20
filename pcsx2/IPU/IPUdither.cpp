@@ -1,32 +1,28 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2019  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
 
-#include "IPU.h"
-#include "IPUdma.h"
-#include "yuv2rgb.h"
-#include "mpeg2lib/Mpeg.h"
+#include "IPU/IPU.h"
+#include "IPU/IPUdma.h"
+#include "IPU/yuv2rgb.h"
+#include "IPU/IPU_MultiISA.h"
+
+MULTI_ISA_UNSHARED_START
 
 void ipu_dither_reference(const macroblock_rgb32 &rgb32, macroblock_rgb16 &rgb16, int dte);
+
+#if defined(_M_X86)
 void ipu_dither_sse2(const macroblock_rgb32 &rgb32, macroblock_rgb16 &rgb16, int dte);
+#endif
 
 __ri void ipu_dither(const macroblock_rgb32 &rgb32, macroblock_rgb16 &rgb16, int dte)
 {
+#if defined(_M_X86)
     ipu_dither_sse2(rgb32, rgb16, dte);
+#else
+    ipu_dither_reference(rgb32, rgb16, dte);
+#endif
 }
 
 __ri void ipu_dither_reference(const macroblock_rgb32 &rgb32, macroblock_rgb16 &rgb16, int dte)
@@ -63,6 +59,8 @@ __ri void ipu_dither_reference(const macroblock_rgb32 &rgb32, macroblock_rgb16 &
         }
     }
 }
+
+#if defined(_M_X86)
 
 __ri void ipu_dither_sse2(const macroblock_rgb32 &rgb32, macroblock_rgb16 &rgb16, int dte)
 {
@@ -120,3 +118,7 @@ __ri void ipu_dither_sse2(const macroblock_rgb32 &rgb32, macroblock_rgb16 &rgb16
         }
     }
 }
+
+#endif
+
+MULTI_ISA_UNSHARED_END

@@ -1,20 +1,7 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
-
+#include <algorithm>
 #include <chrono>
 #include <thread>
 
@@ -58,7 +45,7 @@ namespace InternalServers
 		//See https://en.cppreference.com/w/cpp/container#Thread_safety
 		//Different elements in the same container can be modified concurrently by different threads
 		for (size_t i = 0; i < dnsQuestions.size(); i++)
-			answers[dnsQuestions[i]] = {0};
+			answers[dnsQuestions[i]] = {};
 	}
 
 	int DNS_Server::DNS_State::AddAnswer(const std::string& answer, IP_Address address)
@@ -81,7 +68,7 @@ namespace InternalServers
 	{
 #ifdef _WIN32
 		/* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
-		WORD wVersionRequested = MAKEWORD(2, 2);
+		const WORD wVersionRequested = MAKEWORD(2, 2);
 
 		WSADATA wsaData{0};
 		const int err = WSAStartup(wVersionRequested, &wsaData);
@@ -101,7 +88,7 @@ namespace InternalServers
 	void DNS_Server::Init(ifaddrs* adapter)
 #endif
 	{
-		localhostIP = {127, 0, 0, 1};
+		localhostIP = {{{127, 0, 0, 1}}};
 
 		//Find IPv4 Address
 		std::optional<IP_Address> adapterIP = AdapterUtils::GetAdapterIP(adapter);
@@ -116,19 +103,11 @@ namespace InternalServers
 	void DNS_Server::LoadHostList()
 	{
 		hosts.clear();
-#ifndef PCSX2_CORE
-		for (const ConfigHost& entry : config.EthHosts)
-		{
-			if (entry.Enabled)
-				hosts.insert_or_assign(entry.Url, *(IP_Address*)entry.Address);
-		}
-#else
 		for (const Pcsx2Config::DEV9Options::HostEntry& entry : EmuConfig.DEV9.EthHosts)
 		{
 			if (entry.Enabled)
 				hosts.insert_or_assign(entry.Url, *(IP_Address*)entry.Address);
 		}
-#endif
 	}
 
 	UDP_Packet* DNS_Server::Recv()
@@ -170,14 +149,14 @@ namespace InternalServers
 			DNS_Packet* ret = new DNS_Packet();
 			ret->id = dns.id; //TODO, drop duplicate requests based on ID
 			ret->SetQR(true);
-			ret->SetOpCode((u8)DNS_OPCode::Query);
+			ret->SetOpCode(static_cast<u8>(DNS_OPCode::Query));
 			ret->SetAA(false);
 			ret->SetTC(false);
 			ret->SetRD(true);
 			ret->SetRA(true);
 			ret->SetAD(false);
 			ret->SetCD(false);
-			ret->SetRCode((u8)DNS_RCode::NoError);
+			ret->SetRCode(static_cast<u8>(DNS_RCode::NoError));
 			//Counts
 			ret->questions = dns.questions;
 
@@ -228,7 +207,7 @@ namespace InternalServers
 			if (ans.integer != 0)
 			{
 				//TODO, might not be effective on pcap
-				const IP_Address local{127, 0, 0, 1};
+				const IP_Address local{{{127, 0, 0, 1}}};
 				if (ans == local)
 					ans = localhostIP;
 
@@ -285,7 +264,7 @@ namespace InternalServers
 	}
 
 #ifdef _WIN32
-	void DNS_Server::GetHost(std::string url, DNS_State* state)
+	void DNS_Server::GetHost(const std::string& url, DNS_State* state)
 	{
 		//Need to convert to UTF16
 		const int size = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
@@ -300,8 +279,7 @@ namespace InternalServers
 		data->session = this;
 		data->url = url;
 
-		int ret = GetAddrInfoEx(converted_string.data(), nullptr, NS_ALL, 0, &hints, (ADDRINFOEX**)&data->result, nullptr, &data->overlapped, &DNS_Server::GetAddrInfoExCallback, &data->cancelHandle);
-
+		const int ret = GetAddrInfoEx(converted_string.data(), nullptr, NS_ALL, 0, &hints, (ADDRINFOEX**)&data->result, nullptr, &data->overlapped, &DNS_Server::GetAddrInfoExCallback, &data->cancelHandle);
 		if (ret == WSA_IO_PENDING)
 			return;
 		else
@@ -356,7 +334,7 @@ namespace InternalServers
 		delete data;
 	}
 #elif defined(__POSIX__)
-	void DNS_Server::GetHost(std::string url, DNS_State* state)
+	void DNS_Server::GetHost(const std::string& url, DNS_State* state)
 	{
 		//Need to spin up thread, pass the parms to it
 
@@ -366,7 +344,7 @@ namespace InternalServers
 		GetHostThread.detach();
 	}
 
-	void DNS_Server::GetAddrInfoThread(std::string url, DNS_State* state)
+	void DNS_Server::GetAddrInfoThread(const std::string& url, DNS_State* state)
 	{
 		addrinfo hints{0};
 		hints.ai_family = AF_INET;

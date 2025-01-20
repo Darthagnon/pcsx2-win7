@@ -1,26 +1,11 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 // Important Note to Future Developers:
 //   None of the COP0 instructions are really critical performance items,
 //   so don't waste time converting any more them into recompiled code
 //   unless it can make them nicely compact.  Calling the C versions will
 //   suffice.
-
-#include "PrecompiledHeader.h"
 
 #include "Common.h"
 #include "R5900OpcodeTables.h"
@@ -44,7 +29,7 @@ namespace COP0 {
 // this should be a conditional Jump -- JZ or JNZ normally.
 static void _setupBranchTest()
 {
-	_eeFlushAllUnused();
+	_eeFlushAllDirty();
 
 	// COP0 branch conditionals are based on the following equation:
 	//  (((psHu16(DMAC_STAT) | ~psHu16(DMAC_PCR)) & 0x3ff) == 0x3ff)
@@ -64,26 +49,32 @@ static void _setupBranchTest()
 
 void recBC0F()
 {
+	const u32 branchTo = ((s32)_Imm_ * 4) + pc;
+	const bool swap = TrySwapDelaySlot(0, 0, 0, false);
 	_setupBranchTest();
-	recDoBranchImm(JE32(0));
+	recDoBranchImm(branchTo, JE32(0), false, swap);
 }
 
 void recBC0T()
 {
+	const u32 branchTo = ((s32)_Imm_ * 4) + pc;
+	const bool swap = TrySwapDelaySlot(0, 0, 0, false);
 	_setupBranchTest();
-	recDoBranchImm(JNE32(0));
+	recDoBranchImm(branchTo, JNE32(0), false, swap);
 }
 
 void recBC0FL()
 {
+	const u32 branchTo = ((s32)_Imm_ * 4) + pc;
 	_setupBranchTest();
-	recDoBranchImm_Likely(JE32(0));
+	recDoBranchImm(branchTo, JE32(0), true, false);
 }
 
 void recBC0TL()
 {
+	const u32 branchTo = ((s32)_Imm_ * 4) + pc;
 	_setupBranchTest();
-	recDoBranchImm_Likely(JNE32(0));
+	recDoBranchImm(branchTo, JNE32(0), true, false);
 }
 
 void recTLBR() { recCall(Interp::TLBR); }
@@ -118,7 +109,7 @@ void recDI()
 	// Jak X, Namco 50th anniversary, Spongebob the Movie, Spongebob Battle for Bikini Bottom,
 	// The Incredibles, The Incredibles rize of the underminer, Soukou kihei armodyne, Garfield Saving Arlene, Tales of Fandom Vol. 2.
 	if (!g_recompilingDelaySlot)
-		recompileNextInstruction(0); // DI execution is delayed by one instruction
+		recompileNextInstruction(false, false); // DI execution is delayed by one instruction
 
 	xMOV(eax, ptr[&cpuRegs.CP0.n.Status]);
 	xTEST(eax, 0x20006); // EXL | ERL | EDI
@@ -144,21 +135,19 @@ void recMFC0()
 	if (_Rd_ == 9)
 	{
 		// This case needs to be handled even if the write-back is ignored (_Rt_ == 0 )
-		xMOV(ecx, ptr[&cpuRegs.cycle]);
+		xMOV(ecx, ptr32[&cpuRegs.cycle]);
+		xADD(ecx, scaleblockcycles_clear());
+		xMOV(ptr32[&cpuRegs.cycle], ecx); // update cycles
 		xMOV(eax, ecx);
-		xSUB(eax, ptr[&s_iLastCOP0Cycle]);
-		u8* skipInc = JNZ8(0);
-		xINC(eax);
-		x86SetJ8(skipInc);
+		xSUB(eax, ptr[&cpuRegs.lastCOP0Cycle]);
 		xADD(ptr[&cpuRegs.CP0.n.Count], eax);
-		xMOV(ptr[&s_iLastCOP0Cycle], ecx);
-		xMOV(eax, ptr[&cpuRegs.CP0.r[_Rd_]]);
+		xMOV(ptr[&cpuRegs.lastCOP0Cycle], ecx);
 
 		if (!_Rt_)
 			return;
 
-		_deleteEEreg(_Rt_, 0);
-		eeSignExtendTo(_Rt_);
+		const int regt = _Rt_ ? _allocX86reg(X86TYPE_GPR, _Rt_, MODE_WRITE) : -1;
+		xMOVSX(xRegister64(regt), ptr32[&cpuRegs.CP0.r[_Rd_]]);
 		return;
 	}
 
@@ -169,22 +158,31 @@ void recMFC0()
 	{
 		if (0 == (_Imm_ & 1)) // MFPS, register value ignored
 		{
-			xMOV(eax, ptr[&cpuRegs.PERF.n.pccr]);
+			const int regt = _allocX86reg(X86TYPE_GPR, _Rt_, MODE_WRITE);
+			xMOVSX(xRegister64(regt), ptr32[&cpuRegs.PERF.n.pccr]);
 		}
 		else if (0 == (_Imm_ & 2)) // MFPC 0, only LSB of register matters
 		{
 			iFlushCall(FLUSH_INTERPRETER);
+			xMOV(eax, ptr32[&cpuRegs.cycle]);
+			xADD(eax, scaleblockcycles_clear());
+			xMOV(ptr32[&cpuRegs.cycle], eax); // update cycles
 			xFastCall((void*)COP0_UpdatePCCR);
-			xMOV(eax, ptr[&cpuRegs.PERF.n.pcr0]);
+
+			const int regt = _allocX86reg(X86TYPE_GPR, _Rt_, MODE_WRITE);
+			xMOVSX(xRegister64(regt), ptr32[&cpuRegs.PERF.n.pcr0]);
 		}
 		else // MFPC 1
 		{
 			iFlushCall(FLUSH_INTERPRETER);
+			xMOV(eax, ptr32[&cpuRegs.cycle]);
+			xADD(eax, scaleblockcycles_clear());
+			xMOV(ptr32[&cpuRegs.cycle], eax); // update cycles
 			xFastCall((void*)COP0_UpdatePCCR);
-			xMOV(eax, ptr[&cpuRegs.PERF.n.pcr1]);
+
+			const int regt = _allocX86reg(X86TYPE_GPR, _Rt_, MODE_WRITE);
+			xMOVSX(xRegister64(regt), ptr32[&cpuRegs.PERF.n.pcr1]);
 		}
-		_deleteEEreg(_Rt_, 0);
-		eeSignExtendTo(_Rt_);
 
 		return;
 	}
@@ -193,10 +191,9 @@ void recMFC0()
 		COP0_LOG("MFC0 Breakpoint debug Registers code = %x\n", cpuRegs.code & 0x3FF);
 		return;
 	}
-	_eeOnWriteReg(_Rt_, 1);
-	_deleteEEreg(_Rt_, 0);
-	xMOV(eax, ptr[&cpuRegs.CP0.r[_Rd_]]);
-	eeSignExtendTo(_Rt_);
+
+	const int regt = _allocX86reg(X86TYPE_GPR, _Rt_, MODE_WRITE);
+	xMOVSX(xRegister64(regt), ptr32[&cpuRegs.CP0.r[_Rd_]]);
 }
 
 void recMTC0()
@@ -207,6 +204,9 @@ void recMTC0()
 		{
 			case 12:
 				iFlushCall(FLUSH_INTERPRETER);
+				xMOV(eax, ptr32[&cpuRegs.cycle]);
+				xADD(eax, scaleblockcycles_clear());
+				xMOV(ptr32[&cpuRegs.cycle], eax); // update cycles
 				xFastCall((void*)WriteCP0Status, g_cpuConstRegs[_Rt_].UL[0]);
 				break;
 
@@ -216,8 +216,10 @@ void recMTC0()
 				break;
 
 			case 9:
-				xMOV(ecx, ptr[&cpuRegs.cycle]);
-				xMOV(ptr[&s_iLastCOP0Cycle], ecx);
+				xMOV(ecx, ptr32[&cpuRegs.cycle]);
+				xADD(ecx, scaleblockcycles_clear());
+				xMOV(ptr32[&cpuRegs.cycle], ecx); // update cycles
+				xMOV(ptr[&cpuRegs.lastCOP0Cycle], ecx);
 				xMOV(ptr32[&cpuRegs.CP0.r[9]], g_cpuConstRegs[_Rt_].UL[0]);
 				break;
 
@@ -228,21 +230,28 @@ void recMTC0()
 						break;
 					// Updates PCRs and sets the PCCR.
 					iFlushCall(FLUSH_INTERPRETER);
+					xMOV(eax, ptr32[&cpuRegs.cycle]);
+					xADD(eax, scaleblockcycles_clear());
+					xMOV(ptr32[&cpuRegs.cycle], eax); // update cycles
 					xFastCall((void*)COP0_UpdatePCCR);
 					xMOV(ptr32[&cpuRegs.PERF.n.pccr], g_cpuConstRegs[_Rt_].UL[0]);
 					xFastCall((void*)COP0_DiagnosticPCCR);
 				}
 				else if (0 == (_Imm_ & 2)) // MTPC 0, only LSB of register matters
 				{
-					xMOV(eax, ptr[&cpuRegs.cycle]);
+					xMOV(eax, ptr32[&cpuRegs.cycle]);
+					xADD(eax, scaleblockcycles_clear());
+					xMOV(ptr32[&cpuRegs.cycle], eax); // update cycles
 					xMOV(ptr32[&cpuRegs.PERF.n.pcr0], g_cpuConstRegs[_Rt_].UL[0]);
-					xMOV(ptr[&s_iLastPERFCycle[0]], eax);
+					xMOV(ptr[&cpuRegs.lastPERFCycle[0]], eax);
 				}
 				else // MTPC 1
 				{
-					xMOV(eax, ptr[&cpuRegs.cycle]);
+					xMOV(eax, ptr32[&cpuRegs.cycle]);
+					xADD(eax, scaleblockcycles_clear());
+					xMOV(ptr32[&cpuRegs.cycle], eax); // update cycles
 					xMOV(ptr32[&cpuRegs.PERF.n.pcr1], g_cpuConstRegs[_Rt_].UL[0]);
-					xMOV(ptr[&s_iLastPERFCycle[1]], eax);
+					xMOV(ptr[&cpuRegs.lastPERFCycle[1]], eax);
 				}
 				break;
 
@@ -260,21 +269,26 @@ void recMTC0()
 		switch (_Rd_)
 		{
 			case 12:
+				_eeMoveGPRtoR(arg1reg, _Rt_);
 				iFlushCall(FLUSH_INTERPRETER);
-				_eeMoveGPRtoR(ecx, _Rt_);
-				xFastCall((void*)WriteCP0Status, ecx);
+				xMOV(eax, ptr32[&cpuRegs.cycle]);
+				xADD(eax, scaleblockcycles_clear());
+				xMOV(ptr32[&cpuRegs.cycle], eax); // update cycles
+				xFastCall((void*)WriteCP0Status);
 				break;
 
 			case 16:
+				_eeMoveGPRtoR(arg1reg, _Rt_);
 				iFlushCall(FLUSH_INTERPRETER);
-				_eeMoveGPRtoR(ecx, _Rt_);
-				xFastCall((void*)WriteCP0Config, ecx);
+				xFastCall((void*)WriteCP0Config);
 				break;
 
 			case 9:
-				xMOV(ecx, ptr[&cpuRegs.cycle]);
+				xMOV(ecx, ptr32[&cpuRegs.cycle]);
+				xADD(ecx, scaleblockcycles_clear());
+				xMOV(ptr32[&cpuRegs.cycle], ecx); // update cycles
 				_eeMoveGPRtoM((uptr)&cpuRegs.CP0.r[9], _Rt_);
-				xMOV(ptr[&s_iLastCOP0Cycle], ecx);
+				xMOV(ptr[&cpuRegs.lastCOP0Cycle], ecx);
 				break;
 
 			case 25:
@@ -283,21 +297,28 @@ void recMTC0()
 					if (0 != (_Imm_ & 0x3E)) // only effective when the register is 0
 						break;
 					iFlushCall(FLUSH_INTERPRETER);
+					xMOV(eax, ptr32[&cpuRegs.cycle]);
+					xADD(eax, scaleblockcycles_clear());
+					xMOV(ptr32[&cpuRegs.cycle], eax); // update cycles
 					xFastCall((void*)COP0_UpdatePCCR);
 					_eeMoveGPRtoM((uptr)&cpuRegs.PERF.n.pccr, _Rt_);
 					xFastCall((void*)COP0_DiagnosticPCCR);
 				}
 				else if (0 == (_Imm_ & 2)) // MTPC 0, only LSB of register matters
 				{
-					xMOV(ecx, ptr[&cpuRegs.cycle]);
+					xMOV(ecx, ptr32[&cpuRegs.cycle]);
+					xADD(ecx, scaleblockcycles_clear());
+					xMOV(ptr32[&cpuRegs.cycle], ecx); // update cycles
 					_eeMoveGPRtoM((uptr)&cpuRegs.PERF.n.pcr0, _Rt_);
-					xMOV(ptr[&s_iLastPERFCycle[0]], ecx);
+					xMOV(ptr[&cpuRegs.lastPERFCycle[0]], ecx);
 				}
 				else // MTPC 1
 				{
-					xMOV(ecx, ptr[&cpuRegs.cycle]);
+					xMOV(ecx, ptr32[&cpuRegs.cycle]);
+					xADD(ecx, scaleblockcycles_clear());
+					xMOV(ptr32[&cpuRegs.cycle], ecx); // update cycles
 					_eeMoveGPRtoM((uptr)&cpuRegs.PERF.n.pcr1, _Rt_);
-					xMOV(ptr[&s_iLastPERFCycle[1]], ecx);
+					xMOV(ptr[&cpuRegs.lastPERFCycle[1]], ecx);
 				}
 				break;
 

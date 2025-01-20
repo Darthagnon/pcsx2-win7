@@ -1,25 +1,14 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "DHCP_Packet.h"
 #include "DEV9/PacketReader/NetLib.h"
 
+#include "common/Console.h"
+
 namespace PacketReader::IP::UDP::DHCP
 {
-	DHCP_Packet::DHCP_Packet(u8* buffer, int bufferSize)
+	DHCP_Packet::DHCP_Packet(const u8* buffer, int bufferSize)
 	{
 		int offset = 0;
 		//Bits 0-31 //Bytes 0-3
@@ -36,16 +25,16 @@ namespace PacketReader::IP::UDP::DHCP
 		NetLib::ReadUInt16(buffer, &offset, &flags);
 
 		//Bits 96-127 //Bytes 12-15
-		NetLib::ReadByteArray(buffer, &offset, 4, (u8*)&clientIP);
+		NetLib::ReadIPAddress(buffer, &offset, &clientIP);
 
 		//Bits 128-159 //Bytes 16-19
-		NetLib::ReadByteArray(buffer, &offset, 4, (u8*)&yourIP);
+		NetLib::ReadIPAddress(buffer, &offset, &yourIP);
 
 		//Bits 160-191 //Bytes 20-23
-		NetLib::ReadByteArray(buffer, &offset, 4, (u8*)&serverIP);
+		NetLib::ReadIPAddress(buffer, &offset, &serverIP);
 
 		//Bits 192-223 //Bytes 24-27
-		NetLib::ReadByteArray(buffer, &offset, 4, (u8*)&gatewayIP);
+		NetLib::ReadIPAddress(buffer, &offset, &gatewayIP);
 
 		//Bits 192+ //Bytes 28-43
 		NetLib::ReadByteArray(buffer, &offset, 16, clientHardwareAddress);
@@ -60,7 +49,7 @@ namespace PacketReader::IP::UDP::DHCP
 
 		do
 		{
-			u8 opKind = buffer[offset];
+			const u8 opKind = buffer[offset];
 			if (opKind == 255)
 			{
 				options.push_back(new DHCPopEND());
@@ -75,7 +64,7 @@ namespace PacketReader::IP::UDP::DHCP
 				opReadFin = true;
 				continue;
 			}
-			u8 opLen = buffer[offset + 1];
+			const u8 opLen = buffer[offset + 1];
 			switch (opKind)
 			{
 				case 0:
@@ -183,7 +172,7 @@ namespace PacketReader::IP::UDP::DHCP
 
 	void DHCP_Packet::WriteBytes(u8* buffer, int* offset)
 	{
-		int start = *offset;
+		const int start = *offset;
 		NetLib::WriteByte08(buffer, offset, op);
 		NetLib::WriteByte08(buffer, offset, hardwareType);
 		NetLib::WriteByte08(buffer, offset, hardwareAddressLength);
@@ -194,10 +183,10 @@ namespace PacketReader::IP::UDP::DHCP
 		NetLib::WriteUInt16(buffer, offset, seconds);
 		NetLib::WriteUInt16(buffer, offset, flags);
 
-		NetLib::WriteByteArray(buffer, offset, 4, (u8*)&clientIP);
-		NetLib::WriteByteArray(buffer, offset, 4, (u8*)&yourIP);
-		NetLib::WriteByteArray(buffer, offset, 4, (u8*)&serverIP);
-		NetLib::WriteByteArray(buffer, offset, 4, (u8*)&gatewayIP);
+		NetLib::WriteIPAddress(buffer, offset, clientIP);
+		NetLib::WriteIPAddress(buffer, offset, yourIP);
+		NetLib::WriteIPAddress(buffer, offset, serverIP);
+		NetLib::WriteIPAddress(buffer, offset, gatewayIP);
 
 		NetLib::WriteByteArray(buffer, offset, 16, clientHardwareAddress);
 		//empty bytes
@@ -221,7 +210,7 @@ namespace PacketReader::IP::UDP::DHCP
 				if (len == maxLength)
 				{
 					i -= 1;
-					int pastLength = options[i]->GetLength();
+					const int pastLength = options[i]->GetLength();
 					len -= pastLength;
 					*offset -= pastLength;
 				}
@@ -232,8 +221,8 @@ namespace PacketReader::IP::UDP::DHCP
 			}
 		}
 
-		int end = start + GetLength();
-		int delta = end - *offset;
+		const int end = start + GetLength();
+		const int delta = end - *offset;
 
 		memset(&buffer[*offset], 0, delta);
 		*offset = start + GetLength();

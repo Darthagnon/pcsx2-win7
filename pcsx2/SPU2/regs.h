@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -178,16 +166,3 @@ Core attributes (SD_C)
 #define VOICE_ADDR_LSAX 0x4 // Loop point address
 #define VOICE_ADDR_NAX 0x8  // Waveform data that should be read next
 
-
-
-// --------------------------------------------------------------------------------------
-//  SPU2 Register Table LUT
-// --------------------------------------------------------------------------------------
-
-#define U16P(x) ((u16*)&(x))
-
-// Returns the hiword of a 32 bit integer.
-#define U16P_HI(x) (((u16*)&(x)) + 1)
-
-extern u16* regtable[0x401];
-extern u16 const* const regtable_original[0x401];

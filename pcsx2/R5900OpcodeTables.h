@@ -1,34 +1,28 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
+
 #pragma once
 
 #include "common/Pcsx2Defs.h"
 
+#include <string>
+
 enum Syscall : u8
 {
 	SetGsCrt = 2,
+	ExecPS2 = 7,
 	SetVTLBRefillHandler = 13,
 	StartThread = 34,
 	ChangeThreadPriority = 41,
+	RFU060 = 60,
 	SetOsdConfigParam = 74,
 	GetOsdConfigParam = 75,
 	SetOsdConfigParam2 = 110,
 	GetOsdConfigParam2 = 111,
 	sysPrintOut = 117,
 	sceSifSetDma = 119,
-	Deci2Call = 124
+	Deci2Call = 124,
+	GetMemorySize = 127
 };
 
 // TODO : Move these into the OpcodeTables namespace
@@ -60,13 +54,14 @@ void COP2_Unknown();
 #define CONDTYPE_LTZ         (0x05 << 0)
 #define CONDTYPE_GEZ         (0x06 << 0)
 
-#define BRANCHTYPE_MASK      (0x07 << 3)
+#define BRANCHTYPE_MASK      (0x0F << 3)
 #define BRANCHTYPE_JUMP      (0x01 << 3)
 #define BRANCHTYPE_BRANCH    (0x02 << 3)
 #define BRANCHTYPE_SYSCALL   (0x03 << 3)
 #define BRANCHTYPE_ERET      (0x04 << 3)
 #define BRANCHTYPE_REGISTER  (0x05 << 3)
 #define BRANCHTYPE_BC1       (0x06 << 3)
+#define BRANCHTYPE_BC0       (0x08 << 3)
 
 #define ALUTYPE_MASK         (0x07 << 3)
 #define ALUTYPE_ADD          (0x01 << 3)

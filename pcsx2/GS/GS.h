@@ -1,39 +1,26 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
 #include "common/WindowInfo.h"
-#include "Window/GSSetting.h"
 #include "SaveState.h"
 #include "pcsx2/Config.h"
-#include "pcsx2/GS/config.h"
 
 #include <map>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
-#ifdef None
-	// X11 seems to like to define this, not fun
-	#undef None
-#endif
-
-// ST_WRITE is defined in libc, avoid this
-enum stateType
+enum class RenderAPI
 {
-	SAVE_WRITE,
-	SAVE_TRANSFER,
-	SAVE_VSYNC
+	None,
+	D3D11,
+	Metal,
+	D3D12,
+	Vulkan,
+	OpenGL
 };
 
 enum class GSVideoMode : u8
@@ -47,16 +34,32 @@ enum class GSVideoMode : u8
 	HDTV_1080I
 };
 
-extern Pcsx2Config::GSOptions GSConfig;
+enum class GSDisplayAlignment
+{
+	Center,
+	LeftOrTop,
+	RightOrBottom
+};
 
-struct HostKeyEvent;
-class HostDisplay;
+struct GSAdapterInfo
+{
+	std::string name;
+	std::vector<std::string> fullscreen_modes;
+	u32 max_texture_size;
+	u32 max_upscale_multiplier;
+};
 
-int GSinit();
-void GSinitConfig();
-void GSshutdown();
-bool GSopen(const Pcsx2Config::GSOptions& config, GSRendererType renderer, u8* basemem);
-bool GSreopen(bool recreate_display, const Pcsx2Config::GSOptions& old_config);
+class SmallStringBase;
+
+// Returns the ID for the specified function, otherwise -1.
+s16 GSLookupGetSkipCountFunctionId(const std::string_view name);
+s16 GSLookupBeforeDrawFunctionId(const std::string_view name);
+s16 GSLookupMoveHandlerFunctionId(const std::string_view name);
+
+bool GSopen(const Pcsx2Config::GSOptions& config, GSRendererType renderer, u8* basemem,
+	GSVSyncMode vsync_mode, bool allow_present_throttle);
+bool GSreopen(bool recreate_device, bool recreate_renderer, GSRendererType new_renderer,
+	std::optional<const Pcsx2Config::GSOptions*> old_config);
 void GSreset(bool hardware_reset);
 void GSclose();
 void GSgifSoftReset(u32 mask);
@@ -69,90 +72,65 @@ void GSgifTransfer2(u8* mem, u32 size);
 void GSgifTransfer3(u8* mem, u32 size);
 void GSvsync(u32 field, bool registers_written);
 int GSfreeze(FreezeAction mode, freezeData* data);
+std::string GSGetBaseSnapshotFilename();
+std::string GSGetBaseVideoFilename();
 void GSQueueSnapshot(const std::string& path, u32 gsdump_frames = 0);
 void GSStopGSDump();
+bool GSBeginCapture(std::string filename);
+void GSEndCapture();
 void GSPresentCurrentFrame();
-#ifndef PCSX2_CORE
-void GSkeyEvent(const HostKeyEvent& e);
-void GSconfigure();
-int GStest();
-bool GSsetupRecording(std::string& filename);
-void GSendRecording();
-#endif
-void GSsetGameCRC(u32 crc, int options);
+void GSThrottlePresentation();
+void GSGameChanged();
+void GSSetDisplayAlignment(GSDisplayAlignment alignment);
+bool GSHasDisplayWindow();
+void GSResizeDisplayWindow(int width, int height, float scale);
+void GSUpdateDisplayWindow();
+void GSSetVSyncMode(GSVSyncMode mode, bool allow_present_throttle);
 
+GSRendererType GSGetCurrentRenderer();
+bool GSIsHardwareRenderer();
+std::string GetDefaultAdapter();
+bool GSWantsExclusiveFullscreen();
+std::optional<float> GSGetHostRefreshRate();
+std::vector<GSAdapterInfo> GSGetAdapterInfo(GSRendererType renderer);
+u32 GSGetMaxUpscaleMultiplier(u32 max_texture_size);
 GSVideoMode GSgetDisplayMode();
 void GSgetInternalResolution(int* width, int* height);
-void GSgetStats(std::string& info);
+void GSgetStats(SmallStringBase& info);
+void GSgetMemoryStats(SmallStringBase& info);
 void GSgetTitleStats(std::string& info);
 
+/// Converts window position to normalized display coordinates (0..1). A value less than 0 or greater than 1 is
+/// returned if the position lies outside the display area.
+void GSTranslateWindowToDisplayCoordinates(float window_x, float window_y, float* display_x, float* display_y);
+
 void GSUpdateConfig(const Pcsx2Config::GSOptions& new_config);
-void GSSwitchRenderer(GSRendererType new_renderer);
-void GSResetAPIState();
-void GSRestoreAPIState();
-bool GSSaveSnapshotToMemory(u32 width, u32 height, std::vector<u32>* pixels);
+void GSSetSoftwareRendering(bool software_renderer, GSInterlaceMode new_interlace);
+bool GSSaveSnapshotToMemory(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders,
+	u32* width, u32* height, std::vector<u32>* pixels);
+void GSJoinSnapshotThreads();
 
-class GSApp
+namespace Host
 {
-	std::string m_section;
-	std::map<std::string, std::string> m_default_configuration;
-	std::map<std::string, std::string> m_configuration_map;
+	/// Called when the GS is creating a render device.
+	/// This could also be fullscreen transition.
+	std::optional<WindowInfo> AcquireRenderWindow(bool recreate_window);
 
-public:
-	std::string m_ini;
-	GSApp();
+	/// Called before drawing the OSD and other display elements.
+	void BeginPresentFrame();
 
-	void Init();
+	/// Called when the GS is finished with a render window.
+	void ReleaseRenderWindow();
 
-#ifndef PCSX2_CORE
-	void BuildConfigurationMap(const char* lpFileName);
-	void ReloadConfig();
-	int GetIniInt(const char* lpAppName, const char* lpKeyName, int nDefault, const char* lpFileName);
-#endif
+	/// Returns true if the hosting application is currently fullscreen.
+	bool IsFullscreen();
 
-	size_t GetIniString(const char* lpAppName, const char* lpKeyName, const char* lpDefault, char* lpReturnedString, size_t nSize, const char* lpFileName);
-	bool WriteIniString(const char* lpAppName, const char* lpKeyName, const char* pString, const char* lpFileName);
+	/// Alters fullscreen state of hosting application.
+	void SetFullscreen(bool enabled);
 
-	void SetConfig(const char* entry, const char* value);
-	void SetConfig(const char* entry, int value);
-	// Avoid issue with overloading
-	template <typename T>
-	T GetConfigT(const char* entry)
-	{
-		return static_cast<T>(GetConfigI(entry));
-	}
-	int GetConfigI(const char* entry);
-	bool GetConfigB(const char* entry);
-	std::string GetConfigS(const char* entry);
+	/// Called when video capture starts or stops. Called on the MTGS thread.
+	void OnCaptureStarted(const std::string& filename);
+	void OnCaptureStopped();
+}
 
-	void SetConfigDir();
-
-	std::vector<GSSetting> m_gs_renderers;
-	std::vector<GSSetting> m_gs_deinterlace;
-	std::vector<GSSetting> m_gs_upscale_multiplier;
-	std::vector<GSSetting> m_gs_max_anisotropy;
-	std::vector<GSSetting> m_gs_dithering;
-	std::vector<GSSetting> m_gs_bifilter;
-	std::vector<GSSetting> m_gs_trifilter;
-	std::vector<GSSetting> m_gs_texture_preloading;
-	std::vector<GSSetting> m_gs_hack;
-	std::vector<GSSetting> m_gs_generic_list;
-	std::vector<GSSetting> m_gs_offset_hack;
-	std::vector<GSSetting> m_gs_hw_mipmapping;
-	std::vector<GSSetting> m_gs_crc_level;
-	std::vector<GSSetting> m_gs_acc_blend_level;
-	std::vector<GSSetting> m_gs_tv_shaders;
-	std::vector<GSSetting> m_gs_dump_compression;
-};
-
-struct GSError
-{
-};
-struct GSRecoverableError : GSError
-{
-};
-struct GSErrorGlVertexArrayTooSmall : GSError
-{
-};
-
-extern GSApp theApp;
+extern Pcsx2Config::GSOptions GSConfig;

@@ -1,53 +1,39 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
 #include "GS/GSState.h"
-#include "GS/GSCapture.h"
 #include <memory>
-
-#ifndef PCSX2_CORE
-#include <mutex>
-#endif
-
-struct HostKeyEvent;
+#include <string>
 
 class GSRenderer : public GSState
 {
 private:
 	bool Merge(int field);
+	bool BeginPresentFrame(bool frame_skip);
+	void EndPresentFrame();
 
 	u64 m_shader_time_start = 0;
 
-#ifndef PCSX2_CORE
-	GSCapture m_capture;
-	std::mutex m_snapshot_mutex;
-	bool m_shift_key = false;
-	bool m_control_key = false;
-#endif
 	std::string m_snapshot;
 	u32 m_dump_frames = 0;
-	u32 m_skipped_duplicate_frames;
+	u32 m_skipped_duplicate_frames = 0;
+
+	// Tracking draw counters for idle frame detection.
+	int m_last_draw_n = 0;
+	int m_last_transfer_n = 0;
 
 protected:
 	GSVector2i m_real_size{0, 0};
-	bool m_texture_shuffle;
+	bool m_texture_shuffle = false;
+	bool m_process_texture = false;
+	bool m_copy_16bit_to_target_shuffle = false;
+	bool m_same_group_texture_shuffle = false;
+	bool m_downscale_source = false;
 
-	virtual GSTexture* GetOutput(int i, int& y_offset) = 0;
-	virtual GSTexture* GetFeedbackOutput() { return nullptr; }
+	virtual GSTexture* GetOutput(int i, float& scale, int& y_offset) = 0;
+	virtual GSTexture* GetFeedbackOutput(float& scale) { return nullptr; }
 
 public:
 	GSRenderer();
@@ -57,26 +43,27 @@ public:
 
 	virtual void Destroy();
 
-	virtual void VSync(u32 field, bool registers_written);
+	virtual void UpdateRenderFixes();
+
+	virtual void VSync(u32 field, bool registers_written, bool idle_frame);
 	virtual bool CanUpscale() { return false; }
-	virtual int GetUpscaleMultiplier() { return 1; }
-	virtual GSVector2 GetTextureScaleFactor() { return { 1.0f, 1.0f }; }
+	virtual float GetUpscaleMultiplier() { return 1.0f; }
+	virtual float GetTextureScaleFactor() { return 1.0f; }
 	GSVector2i GetInternalResolution();
+	float GetModXYOffset();
 
-	virtual void PurgePool() override;
-	virtual void PurgeTextureCache();
+	virtual GSTexture* LookupPaletteSource(u32 CBP, u32 CPSM, u32 CBW, GSVector2i& offset, float* scale, const GSVector2i& size);
 
-	bool SaveSnapshotToMemory(u32 width, u32 height, std::vector<u32>* pixels);
+	bool IsIdleFrame() const;
+
+	bool SaveSnapshotToMemory(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders,
+		u32* width, u32* height, std::vector<u32>* pixels);
 
 	void QueueSnapshot(const std::string& path, u32 gsdump_frames);
 	void StopGSDump();
 	void PresentCurrentFrame();
-
-#ifndef PCSX2_CORE
-	bool BeginCapture(std::string& filename);
+	bool BeginCapture(std::string filename, const GSVector2i& size = GSVector2i(0, 0));
 	void EndCapture();
-	void KeyEvent(const HostKeyEvent& e);
-#endif
 };
 
 extern std::unique_ptr<GSRenderer> g_gs_renderer;

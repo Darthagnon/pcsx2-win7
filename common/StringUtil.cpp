@@ -1,27 +1,16 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
+#include "Assertions.h"
 #include "StringUtil.h"
+
 #include <cctype>
 #include <codecvt>
 #include <cstdio>
 #include <sstream>
 #include <algorithm>
 
-#include "fmt/core.h"
+#include "fmt/format.h"
 
 #ifdef _WIN32
 #include "RedtapeWindows.h"
@@ -173,7 +162,7 @@ namespace StringUtil
 		return len;
 	}
 
-	std::size_t Strlcpy(char* dst, const std::string_view& src, std::size_t size)
+	std::size_t Strlcpy(char* dst, const std::string_view src, std::size_t size)
 	{
 		std::size_t len = src.length();
 		if (len < size)
@@ -189,7 +178,7 @@ namespace StringUtil
 		return len;
 	}
 
-	std::optional<std::vector<u8>> DecodeHex(const std::string_view& in)
+	std::optional<std::vector<u8>> DecodeHex(const std::string_view in)
 	{
 		std::vector<u8> data;
 		data.reserve(in.size() / 2);
@@ -215,7 +204,7 @@ namespace StringUtil
 		return ss.str();
 	}
 
-	std::string toLower(const std::string_view& input)
+	std::string toLower(const std::string_view input)
 	{
 		std::string newStr;
 		std::transform(input.begin(), input.end(), std::back_inserter(newStr),
@@ -223,7 +212,7 @@ namespace StringUtil
 		return newStr;
 	}
 
-	std::string toUpper(const std::string_view& input)
+	std::string toUpper(const std::string_view input)
 	{
 		std::string newStr;
 		std::transform(input.begin(), input.end(), std::back_inserter(newStr),
@@ -231,7 +220,7 @@ namespace StringUtil
 		return newStr;
 	}
 
-	bool compareNoCase(const std::string_view& str1, const std::string_view& str2)
+	bool compareNoCase(const std::string_view str1, const std::string_view str2)
 	{
 		if (str1.length() != str2.length())
 		{
@@ -252,7 +241,7 @@ namespace StringUtil
 		return lines;
 	}
 
-	std::string_view StripWhitespace(const std::string_view& str)
+	std::string_view StripWhitespace(const std::string_view str)
 	{
 		std::string_view::size_type start = 0;
 		while (start < str.size() && std::isspace(str[start]))
@@ -288,7 +277,7 @@ namespace StringUtil
 		}
 	}
 
-	std::vector<std::string_view> SplitString(const std::string_view& str, char delimiter, bool skip_empty /*= true*/)
+	std::vector<std::string_view> SplitString(const std::string_view str, char delimiter, bool skip_empty /*= true*/)
 	{
 		std::vector<std::string_view> res;
 		std::string_view::size_type last_pos = 0;
@@ -312,14 +301,14 @@ namespace StringUtil
 		return res;
 	}
 
-	std::string ReplaceAll(const std::string_view& subject, const std::string_view& search, const std::string_view& replacement)
+	std::string ReplaceAll(const std::string_view subject, const std::string_view search, const std::string_view replacement)
 	{
 		std::string ret(subject);
 		ReplaceAll(&ret, search, replacement);
 		return ret;
 	}
 
-	void ReplaceAll(std::string* subject, const std::string_view& search, const std::string_view& replacement)
+	void ReplaceAll(std::string* subject, const std::string_view search, const std::string_view replacement)
 	{
 		if (!subject->empty())
 		{
@@ -332,7 +321,7 @@ namespace StringUtil
 		}
 	}
 
-	bool ParseAssignmentString(const std::string_view& str, std::string_view* key, std::string_view* value)
+	bool ParseAssignmentString(const std::string_view str, std::string_view* key, std::string_view* value)
 	{
 		const std::string_view::size_type pos = str.find('=');
 		if (pos == std::string_view::npos)
@@ -370,8 +359,131 @@ namespace StringUtil
 		}
 	}
 
+	void EncodeAndAppendUTF8(std::string& s, char32_t ch)
+	{
+		if (ch <= 0x7F)
+		{
+			s.push_back(static_cast<char>(static_cast<u8>(ch)));
+		}
+		else if (ch <= 0x07FF)
+		{
+			s.push_back(static_cast<char>(static_cast<u8>(0xc0 | static_cast<u8>((ch >> 6) & 0x1f))));
+			s.push_back(static_cast<char>(static_cast<u8>(0x80 | static_cast<u8>((ch & 0x3f)))));
+		}
+		else if (ch <= 0xFFFF)
+		{
+			s.push_back(static_cast<char>(static_cast<u8>(0xe0 | static_cast<u8>(((ch >> 12) & 0x0f)))));
+			s.push_back(static_cast<char>(static_cast<u8>(0x80 | static_cast<u8>(((ch >> 6) & 0x3f)))));
+			s.push_back(static_cast<char>(static_cast<u8>(0x80 | static_cast<u8>((ch & 0x3f)))));
+		}
+		else if (ch <= 0x10FFFF)
+		{
+			s.push_back(static_cast<char>(static_cast<u8>(0xf0 | static_cast<u8>(((ch >> 18) & 0x07)))));
+			s.push_back(static_cast<char>(static_cast<u8>(0x80 | static_cast<u8>(((ch >> 12) & 0x3f)))));
+			s.push_back(static_cast<char>(static_cast<u8>(0x80 | static_cast<u8>(((ch >> 6) & 0x3f)))));
+			s.push_back(static_cast<char>(static_cast<u8>(0x80 | static_cast<u8>((ch & 0x3f)))));
+		}
+		else
+		{
+			s.push_back(static_cast<char>(0xefu));
+			s.push_back(static_cast<char>(0xbfu));
+			s.push_back(static_cast<char>(0xbdu));
+		}
+	}
+
+	size_t DecodeUTF8(const void* bytes, size_t length, char32_t* ch)
+	{
+		const u8* s = reinterpret_cast<const u8*>(bytes);
+		if (s[0] < 0x80)
+		{
+			*ch = s[0];
+			return 1;
+		}
+		else if ((s[0] & 0xe0) == 0xc0)
+		{
+			if (length < 2)
+				goto invalid;
+
+			*ch = static_cast<char32_t>((static_cast<u32>(s[0] & 0x1f) << 6) | (static_cast<u32>(s[1] & 0x3f) << 0));
+			return 2;
+		}
+		else if ((s[0] & 0xf0) == 0xe0)
+		{
+			if (length < 3)
+				goto invalid;
+
+			*ch = static_cast<char32_t>((static_cast<u32>(s[0] & 0x0f) << 12) | (static_cast<u32>(s[1] & 0x3f) << 6) |
+										(static_cast<u32>(s[2] & 0x3f) << 0));
+			return 3;
+		}
+		else if ((s[0] & 0xf8) == 0xf0 && (s[0] <= 0xf4))
+		{
+			if (length < 4)
+				goto invalid;
+
+			*ch = static_cast<char32_t>((static_cast<u32>(s[0] & 0x07) << 18) | (static_cast<u32>(s[1] & 0x3f) << 12) |
+										(static_cast<u32>(s[2] & 0x3f) << 6) | (static_cast<u32>(s[3] & 0x3f) << 0));
+			return 4;
+		}
+
+	invalid:
+		*ch = 0xFFFFFFFFu;
+		return 1;
+	}
+
+	size_t DecodeUTF8(const std::string_view str, size_t offset, char32_t* ch)
+	{
+		return DecodeUTF8(str.data() + offset, str.length() - offset, ch);
+	}
+
+	size_t DecodeUTF8(const std::string& str, size_t offset, char32_t* ch)
+	{
+		return DecodeUTF8(str.data() + offset, str.length() - offset, ch);
+	}
+
+	std::string Ellipsise(const std::string_view str, u32 max_length, const char* ellipsis /*= "..."*/)
+	{
+		std::string ret;
+		ret.reserve(max_length);
+
+		const u32 str_length = static_cast<u32>(str.length());
+		const u32 ellipsis_len = static_cast<u32>(std::strlen(ellipsis));
+		pxAssert(ellipsis_len > 0 && ellipsis_len <= max_length);
+
+		if (str_length > max_length)
+		{
+			const u32 copy_size = std::min(str_length, max_length - ellipsis_len);
+			if (copy_size > 0)
+				ret.append(str.data(), copy_size);
+			if (copy_size != str_length)
+				ret.append(ellipsis);
+		}
+		else
+		{
+			ret.append(str);
+		}
+
+		return ret;
+	}
+
+	void EllipsiseInPlace(std::string& str, u32 max_length, const char* ellipsis /*= "..."*/)
+	{
+		const u32 str_length = static_cast<u32>(str.length());
+		const u32 ellipsis_len = static_cast<u32>(std::strlen(ellipsis));
+		pxAssert(ellipsis_len > 0 && ellipsis_len <= max_length);
+
+		if (str_length > max_length)
+		{
+			const u32 keep_size = std::min(static_cast<u32>(str.length()), max_length - ellipsis_len);
+			if (keep_size != str_length)
+				str.erase(keep_size);
+
+			str.append(ellipsis);
+		}
+	}
+
 #ifdef _WIN32
-	std::wstring UTF8StringToWideString(const std::string_view& str)
+	std::wstring UTF8StringToWideString(const std::string_view str)
 	{
 		std::wstring ret;
 		if (!UTF8StringToWideString(ret, str))
@@ -380,7 +492,7 @@ namespace StringUtil
 		return ret;
 	}
 
-	bool UTF8StringToWideString(std::wstring& dest, const std::string_view& str)
+	bool UTF8StringToWideString(std::wstring& dest, const std::string_view str)
 	{
 		int wlen = MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.length()), nullptr, 0);
 		if (wlen < 0)

@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- * 
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -36,7 +24,7 @@ alignas(16) const u32 sse4_maxvals[2][4] = {
 // and its faster... so just always make NaNs into positive infinity.
 void mVUclamp1(microVU& mVU, const xmm& reg, const xmm& regT1, int xyzw, bool bClampE = 0)
 {
-	if (((!clampE && CHECK_VU_OVERFLOW) || (clampE && bClampE)) && mVU.regAlloc->checkVFClamp(reg.Id))
+	if (((!clampE && CHECK_VU_OVERFLOW(mVU.index)) || (clampE && bClampE)) && mVU.regAlloc->checkVFClamp(reg.Id))
 	{
 		switch (xyzw)
 		{
@@ -59,7 +47,7 @@ void mVUclamp1(microVU& mVU, const xmm& reg, const xmm& regT1, int xyzw, bool bC
 // so we just use a temporary mem location for our backup for now... (non-sse4 version only)
 void mVUclamp2(microVU& mVU, const xmm& reg, const xmm& regT1in, int xyzw, bool bClampE = 0)
 {
-	if (((!clampE && CHECK_VU_SIGN_OVERFLOW) || (clampE && bClampE && CHECK_VU_SIGN_OVERFLOW)) && mVU.regAlloc->checkVFClamp(reg.Id))
+	if (((!clampE && CHECK_VU_SIGN_OVERFLOW(mVU.index)) || (clampE && bClampE && CHECK_VU_SIGN_OVERFLOW(mVU.index))) && mVU.regAlloc->checkVFClamp(reg.Id))
 	{
 		int i = (xyzw == 1 || xyzw == 2 || xyzw == 4 || xyzw == 8) ? 0 : 1;
 		xPMIN.SD(reg, ptr128[&sse4_maxvals[i][0]]);
@@ -85,6 +73,6 @@ void mVUclamp3(microVU& mVU, const xmm& reg, const xmm& regT1, int xyzw)
 // but this clamp is just a precaution just-in-case.
 void mVUclamp4(microVU& mVU, const xmm& reg, const xmm& regT1, int xyzw)
 {
-	if (clampE && !CHECK_VU_SIGN_OVERFLOW && mVU.regAlloc->checkVFClamp(reg.Id))
+	if (clampE && !CHECK_VU_SIGN_OVERFLOW(mVU.index) && mVU.regAlloc->checkVFClamp(reg.Id))
 		mVUclamp1(mVU, reg, regT1, xyzw, 1);
 }

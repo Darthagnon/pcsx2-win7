@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -24,35 +12,38 @@
 #include "DEV9DnsHostDialog.h"
 #include "DEV9/net.h"
 
-class SettingsDialog;
+class SettingsWindow;
 
 class DEV9SettingsWidget : public QWidget
 {
 	Q_OBJECT
 
 private Q_SLOTS:
-	void onEthEnabledChanged(int state);
+	void onEthEnabledChanged(Qt::CheckState state);
 	void onEthDeviceTypeChanged(int index);
 	void onEthDeviceChanged(int index);
-	void onEthDHCPInterceptChanged(int state);
+	void onEthDHCPInterceptChanged(Qt::CheckState state);
 	void onEthIPChanged(QLineEdit* sender, const char* section, const char* key);
-	void onEthAutoChanged(QCheckBox* sender, int state, QLineEdit* input, const char* section, const char* key);
+	void onEthAutoChanged(QCheckBox* sender, Qt::CheckState state, QLineEdit* input, const char* section, const char* key);
 	void onEthDNSModeChanged(QComboBox* sender, int index, QLineEdit* input, const char* section, const char* key);
 	void onEthHostAdd();
 	void onEthHostDel();
 	void onEthHostExport();
 	void onEthHostImport();
+	void onEthHostPerGame();
 	void onEthHostEdit(QStandardItem* item);
 
-	void onHddEnabledChanged(int state);
+	void onHddEnabledChanged(Qt::CheckState state);
 	void onHddBrowseFileClicked();
+	void onHddFileTextChange();
 	void onHddFileEdit();
 	void onHddSizeSlide(int i);
-	void onHddSizeSpin(int i);
+	void onHddSizeAccessorSpin();
+	void onHddLBA48Changed(Qt::CheckState state);
 	void onHddCreateClicked();
 
 public:
-	DEV9SettingsWidget(SettingsDialog* dialog, QWidget* parent);
+	DEV9SettingsWidget(SettingsWindow* dialog, QWidget* parent);
 	~DEV9SettingsWidget();
 
 protected:
@@ -61,19 +52,27 @@ protected:
 
 private:
 	void AddAdapter(const AdapterEntry& adapter);
+	void LoadAdapters();
 	void RefreshHostList();
 	int CountHostsConfig();
-	std::vector<HostEntryUi> ListHostsConfig();
+	std::optional<std::vector<HostEntryUi>> ListHostsConfig();
+	std::vector<HostEntryUi> ListBaseHostsConfig();
 	void AddNewHostConfig(const HostEntryUi& host);
 	void DeleteHostConfig(int index);
 
-	SettingsDialog* m_dialog;
+	void UpdateHddSizeUIEnabled();
+	void UpdateHddSizeUIValues();
+
+	SettingsWindow* m_dialog;
 
 	Ui::DEV9SettingsWidget m_ui;
+
+	bool m_firstShow{true};
 
 	QStandardItemModel* m_ethHost_model;
 	QSortFilterProxyModel* m_ethHosts_proxy;
 
+	bool m_adaptersLoaded{false};
 	std::vector<Pcsx2Config::DEV9Options::NetApi> m_api_list;
 	std::vector<const char*> m_api_namelist;
 	std::vector<const char*> m_api_valuelist;

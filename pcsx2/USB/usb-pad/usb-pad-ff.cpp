@@ -1,26 +1,14 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "usb-pad.h"
 #include "lg/lg_ff.h"
 
+#include "common/Console.h"
+
 namespace usb_pad
 {
-
-	void SetConstantForce(FFDevice* ffdev, int force)
+	static void SetConstantForce(FFDevice* ffdev, int force)
 	{
 		//parsed_ff_data ff;
 
@@ -28,7 +16,7 @@ namespace usb_pad
 		ffdev->SetConstantForce(level);
 	}
 
-	void SetSpringForce(FFDevice* ffdev, const spring& force, int caps)
+	static void SetSpringForce(FFDevice* ffdev, const spring& force, int caps)
 	{
 		parsed_ff_data ff;
 
@@ -53,7 +41,7 @@ namespace usb_pad
 		ffdev->SetSpringForce(ff);
 	}
 
-	void SetDamperForce(FFDevice* ffdev, const damper& force, int caps)
+	static void SetDamperForce(FFDevice* ffdev, const damper& force, int caps)
 	{
 		parsed_ff_data ff;
 
@@ -69,7 +57,7 @@ namespace usb_pad
 		ffdev->SetDamperForce(ff);
 	}
 
-	void SetFrictionForce(FFDevice* ffdev, const friction& frict)
+	static void SetFrictionForce(FFDevice* ffdev, const friction& frict)
 	{
 		parsed_ff_data ff;
 
@@ -88,22 +76,22 @@ namespace usb_pad
 		ffdev->SetFrictionForce(ff);
 	}
 
-	void SetAutoCenter(FFDevice* ffdev, const autocenter& effect)
+	static void SetAutoCenter(FFDevice* ffdev, const autocenter& effect)
 	{
 		DevCon.WriteLn("%s: k1 %d k2 %d clip %d\n", __func__, effect.k1, effect.k2, effect.clip);
 		ffdev->SetAutoCenter((effect.k1 * effect.clip / 255) * 100 / 255); // FIXME
 	}
 
 	// Unless passing ff packets straight to a device, parse it here
-	void Pad::ParseFFData(const ff_data* ffdata, bool isDFP)
+	void PadState::ParseFFData(const ff_data* ffdata, bool isDFP)
 	{
 		if (!mFFdev)
 			return;
-
+#if defined(PCSX2_DEVBUILD) || defined(_DEBUG)
 		DevCon.WriteLn("FFB %02X, %02X, %02X, %02X : %02X, %02X, %02X, %02X",
-				   ffdata->cmdslot, ffdata->type, ffdata->u.params[0], ffdata->u.params[1],
-				   ffdata->u.params[2], ffdata->u.params[3], ffdata->u.params[4], ffdata->padd0);
-
+			ffdata->cmdslot, ffdata->type, ffdata->u.params[0], ffdata->u.params[1],
+			ffdata->u.params[2], ffdata->u.params[3], ffdata->u.params[4], ffdata->padd0);
+#endif
 		if (ffdata->cmdslot != CMD_EXTENDED_CMD)
 		{
 			uint8_t slots = (ffdata->cmdslot & 0xF0) >> 4;
@@ -145,22 +133,22 @@ namespace usb_pad
 										t++;
 									force = (std::min)((std::max)(force + t - 128, -128), 127);
 								}
-								SetConstantForce(mFFdev, 128 + force);
+								SetConstantForce(mFFdev.get(), 128 + force);
 							}
 							else
 							{
 								for (int i = 0; i < 4; i++)
 								{
 									if (slots == (1 << i))
-										SetConstantForce(mFFdev, ffdata->u.params[i]);
+										SetConstantForce(mFFdev.get(), ffdata->u.params[i]);
 								}
 							}
 							break;
 						case FTYPE_SPRING:
-							SetSpringForce(mFFdev, ffdata->u.spring, isDFP ? 0 : FF_LG_CAPS_OLD_LOW_RES_COEF);
+							SetSpringForce(mFFdev.get(), ffdata->u.spring, isDFP ? 0 : FF_LG_CAPS_OLD_LOW_RES_COEF);
 							break;
 						case FTYPE_HIGH_RESOLUTION_SPRING:
-							SetSpringForce(mFFdev, ffdata->u.spring, FF_LG_CAPS_HIGH_RES_COEF | FF_LG_CAPS_HIGH_RES_DEADBAND);
+							SetSpringForce(mFFdev.get(), ffdata->u.spring, FF_LG_CAPS_HIGH_RES_COEF | FF_LG_CAPS_HIGH_RES_DEADBAND);
 							break;
 						case FTYPE_VARIABLE: //Ramp-like
 							//SetRampVariable(mFFdev, ffdata->u.variable);
@@ -172,13 +160,13 @@ namespace usb_pad
 									if (warned == 0)
 									{
 										DevCon.WriteLn("variable force cannot be converted to constant force (l1=%hhu, t1=%hhu, s1=%hhu, d1=%hhu\n",
-												   ffdata->u.variable.l1, ffdata->u.variable.t1, ffdata->u.variable.s1, ffdata->u.variable.d1);
+											ffdata->u.variable.l1, ffdata->u.variable.t1, ffdata->u.variable.s1, ffdata->u.variable.d1);
 										warned = 1;
 									}
 								}
 								else
 								{
-									SetConstantForce(mFFdev, ffdata->u.variable.l1);
+									SetConstantForce(mFFdev.get(), ffdata->u.variable.l1);
 								}
 							}
 							else if (slots & (1 << 2))
@@ -188,30 +176,30 @@ namespace usb_pad
 									if (warned == 0)
 									{
 										DevCon.WriteLn("variable force cannot be converted to constant force (l2=%hhu, t2=%hhu, s2=%hhu, d2=%hhu\n",
-												   ffdata->u.variable.l2, ffdata->u.variable.t2, ffdata->u.variable.s2, ffdata->u.variable.d2);
+											ffdata->u.variable.l2, ffdata->u.variable.t2, ffdata->u.variable.s2, ffdata->u.variable.d2);
 										warned = 1;
 									}
 								}
 								else
 								{
-									SetConstantForce(mFFdev, ffdata->u.variable.l2);
+									SetConstantForce(mFFdev.get(), ffdata->u.variable.l2);
 								}
 							}
 							break;
 						case FTYPE_FRICTION:
-							SetFrictionForce(mFFdev, ffdata->u.friction);
+							SetFrictionForce(mFFdev.get(), ffdata->u.friction);
 							break;
 						case FTYPE_DAMPER:
-							SetDamperForce(mFFdev, ffdata->u.damper, 0);
+							SetDamperForce(mFFdev.get(), ffdata->u.damper, 0);
 							break;
 						case FTYPE_HIGH_RESOLUTION_DAMPER:
 							caps = FF_LG_CAPS_HIGH_RES_COEF;
 							if (isDFP)
 								caps |= FF_LG_CAPS_DAMPER_CLIP;
-							SetDamperForce(mFFdev, ffdata->u.damper, caps);
+							SetDamperForce(mFFdev.get(), ffdata->u.damper, caps);
 							break;
 						case FTYPE_AUTO_CENTER_SPRING:
-							SetAutoCenter(mFFdev, ffdata->u.autocenter);
+							SetAutoCenter(mFFdev.get(), ffdata->u.autocenter);
 							break;
 						default:
 							DevCon.WriteLn("CMD_DOWNLOAD_AND_PLAY: unhandled force type 0x%02X in slots 0x%02X\n", ffdata->type, slots);
@@ -264,7 +252,7 @@ namespace usb_pad
 					if (slots == 0x0F)
 					{
 						//just release force
-						SetConstantForce(mFFdev, 127);
+						SetConstantForce(mFFdev.get(), 127);
 					}
 					else
 					{
@@ -301,7 +289,7 @@ namespace usb_pad
 			{
 			}
 			DevCon.WriteLn("CMD_EXTENDED: unhandled cmd 0x%02X%02X%02X\n",
-					   ffdata->type, ffdata->u.params[0], ffdata->u.params[1]);
+				ffdata->type, ffdata->u.params[0], ffdata->u.params[1]);
 		}
 	}
 

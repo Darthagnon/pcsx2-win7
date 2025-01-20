@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: MIT
+ 
 /*
 * QEMU HID devices
 *
@@ -23,9 +26,13 @@
 * THE SOFTWARE.
 */
 
-#include "PrecompiledHeader.h"
 #include "hid.h"
 #include "input-keymap.h"
+
+#include <algorithm>
+#include <cassert>
+#include <cstdlib>
+#include <cstring>
 
 #define HID_USAGE_ERROR_ROLLOVER 0x01
 #define HID_USAGE_POSTFAIL 0x02
@@ -295,39 +302,11 @@ static const uint8_t hid_usage_keys[0x100] = {
 
 bool hid_has_events(HIDState* hs)
 {
-	return hs->n > 0 || hs->idle_pending;
-}
-
-static void hid_idle_timer(void* opaque)
-{
-	HIDState* hs = (HIDState*)opaque;
-
-	hs->idle_pending = true;
-	hs->event(hs);
-}
-
-static void hid_del_idle_timer(HIDState* hs)
-{
-	/*if (hs->idle_timer) {
-        timer_del(hs->idle_timer);
-        timer_free(hs->idle_timer);
-        hs->idle_timer = NULL;
-    }*/
+	return hs->n > 0;
 }
 
 void hid_set_next_idle(HIDState* hs)
 {
-	/*if (hs->idle) {
-        uint64_t expire_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-            NANOSECONDS_PER_SECOND * hs->idle * 4 / 1000;
-        if (!hs->idle_timer) {
-            hs->idle_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, hid_idle_timer, hs);
-        }
-        timer_mod_ns(hs->idle_timer, expire_time);
-    }
-    else {
-        hid_del_idle_timer(hs);
-    }*/
 }
 
 static void hid_pointer_event(HIDState* hs, InputEvent* evt)
@@ -522,10 +501,10 @@ static void hid_keyboard_process_keycode(HIDState* hs)
 			if (hs->kbd.modifiers & (1 << 9))
 			{
 				/* The hid_codes for the 0xe1/0x1d scancode sequence are 0xe9/0xe0.
-            * Here we're processing the second hid_code.  By dropping bit 9
-            * and setting bit 8, the scancode after 0x1d will access the
-            * second half of the table.
-            */
+				* Here we're processing the second hid_code.  By dropping bit 9
+				* and setting bit 8, the scancode after 0x1d will access the
+				* second half of the table.
+				*/
 				hs->kbd.modifiers ^= (1 << 8) | (1 << 9);
 				return;
 			}
@@ -540,8 +519,8 @@ static void hid_keyboard_process_keycode(HIDState* hs)
 		case 0xe6:
 		case 0xe7:
 			/* Ctrl_L/Ctrl_R, Shift_L/Shift_R, Alt_L/Alt_R, Win_L/Win_R.
-        * Handle releases here, or fall through to process presses.
-        */
+			* Handle releases here, or fall through to process presses.
+			*/
 			if (keycode & (1 << 7))
 			{
 				hs->kbd.modifiers &= ~(1 << (hid_code & 0x0f));
@@ -551,11 +530,11 @@ static void hid_keyboard_process_keycode(HIDState* hs)
 		case 0xe8:
 		case 0xe9:
 			/* USB modifiers are just 1 byte long.  Bits 8 and 9 of
-        * hs->kbd.modifiers implement a state machine that detects the
-        * 0xe0 and 0xe1/0x1d sequences.  These bits do not follow the
-        * usual rules where bit 7 marks released keys; they are cleared
-        * elsewhere in the function as the state machine dictates.
-        */
+			* hs->kbd.modifiers implement a state machine that detects the
+			* 0xe0 and 0xe1/0x1d sequences.  These bits do not follow the
+			* usual rules where bit 7 marks released keys; they are cleared
+			* elsewhere in the function as the state machine dictates.
+			*/
 			hs->kbd.modifiers |= 1 << (hid_code & 0x0f);
 			return;
 
@@ -631,7 +610,6 @@ void hid_pointer_activate(HIDState* hs)
 {
 	if (!hs->ptr.mouse_grabbed)
 	{
-		//qemu_input_handler_activate(hs->s);
 		hs->ptr.mouse_grabbed = 1;
 	}
 }
@@ -641,8 +619,6 @@ int hid_pointer_poll(HIDState* hs, uint8_t* buf, int len)
 	int dx, dy, dz, l;
 	int index;
 	HIDPointerEvent* e;
-
-	hs->idle_pending = false;
 
 	hid_pointer_activate(hs);
 
@@ -735,8 +711,6 @@ int hid_pointer_poll(HIDState* hs, uint8_t* buf, int len)
 
 int hid_keyboard_poll(HIDState* hs, uint8_t* buf, int len)
 {
-	hs->idle_pending = false;
-
 	if (len < 2)
 	{
 		return 0;
@@ -748,18 +722,19 @@ int hid_keyboard_poll(HIDState* hs, uint8_t* buf, int len)
 	buf[1] = 0;
 	if (hs->kbd.keys > 6)
 	{
-		memset(buf + 2, HID_USAGE_ERROR_ROLLOVER, MIN(8, len) - 2);
+		memset(buf + 2, HID_USAGE_ERROR_ROLLOVER, std::min(8, len) - 2);
 	}
 	else
 	{
-		memcpy(buf + 2, hs->kbd.key, MIN(8, len) - 2);
+		memcpy(buf + 2, hs->kbd.key, std::min(8, len) - 2);
 	}
 
-	return MIN(8, len);
+	return std::min(8, len);
 }
 
 int hid_keyboard_write(HIDState* hs, uint8_t* buf, int len)
 {
+#if 0
 	if (len > 0)
 	{
 		int ledstate = 0;
@@ -783,6 +758,7 @@ int hid_keyboard_write(HIDState* hs, uint8_t* buf, int len)
 		}
 		//kbd_put_ledstate(ledstate);
 	}
+#endif
 	return 0;
 }
 
@@ -805,14 +781,10 @@ void hid_reset(HIDState* hs)
 	hs->n = 0;
 	hs->protocol = 1;
 	hs->idle = 0;
-	hs->idle_pending = false;
-	hid_del_idle_timer(hs);
 }
 
 void hid_free(HIDState* hs)
 {
-	//qemu_input_handler_unregister(hs->s);
-	hid_del_idle_timer(hs);
 }
 
 void hid_init(HIDState* hs, int kind, HIDEventFunc event)

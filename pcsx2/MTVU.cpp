@@ -1,24 +1,12 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
-#include "MTVU.h"
-#include "newVif.h"
 #include "Gif_Unit.h"
-#include "common/Threading.h"
+#include "MTVU.h"
+#include "VMManager.h"
+#include "Vif_Dynarec.h"
+
 #include <thread>
 
 VU_Thread vu1Thread;
@@ -55,9 +43,11 @@ static void MTVU_Unpack(void* data, VIFregisters& vifRegs)
 }
 
 // Called on Saving/Loading states...
-void SaveStateBase::mtvuFreeze()
+bool SaveStateBase::mtvuFreeze()
 {
-	FreezeTag("MTVU");
+	if (!FreezeTag("MTVU"))
+		return false;
+
 	pxAssert(vu1Thread.IsDone());
 	if (!IsSaving())
 	{
@@ -86,6 +76,7 @@ void SaveStateBase::mtvuFreeze()
 	vu1Thread.gsLabel.store(gsLabel);
 
 	Freeze(vu1Thread.vuCycleIdx);
+	return IsOkay();
 }
 
 VU_Thread::VU_Thread()
@@ -100,18 +91,19 @@ VU_Thread::~VU_Thread()
 
 void VU_Thread::Open()
 {
-	if (m_thread.Joinable())
+	if (IsOpen())
 		return;
 
 	Reset();
 	semaEvent.Reset();
 	m_shutdown_flag.store(false, std::memory_order_release);
+	m_thread.SetStackSize(VMManager::EMU_THREAD_STACK_SIZE);
 	m_thread.Start([this]() { ExecuteRingBuffer(); });
 }
 
 void VU_Thread::Close()
 {
-	if (!m_thread.Joinable())
+	if (!IsOpen())
 		return;
 
 	m_shutdown_flag.store(true, std::memory_order_release);
@@ -126,8 +118,8 @@ void VU_Thread::Reset()
 	m_write_pos = 0;
 	m_ato_read_pos = 0;
 	m_read_pos = 0;
-	memzero(vif);
-	memzero(vifRegs);
+	std::memset(&vif, 0, sizeof(vif));
+	std::memset(&vifRegs, 0, sizeof(vifRegs));
 	for (size_t i = 0; i < 4; ++i)
 		vu1Thread.vuCycles[i] = 0;
 	vu1Thread.mtvuInterrupts = 0;
@@ -327,7 +319,7 @@ __fi void VU_Thread::Write(u32 val)
 	m_write_pos += 1;
 }
 
-__fi void VU_Thread::Write(void* src, u32 size)
+__fi void VU_Thread::Write(const void* src, u32 size)
 {
 	memcpy(GetWritePtr(), src, size);
 	m_write_pos += size_u32(size);
@@ -362,7 +354,7 @@ void VU_Thread::Get_MTVUChanges()
 	u32 interrupts = mtvuInterrupts.load(std::memory_order_relaxed);
 	if (!interrupts)
 		return;
-	
+
 	if (interrupts & InterruptFlagSignal)
 	{
 		std::atomic_thread_fence(std::memory_order_acquire);
@@ -394,10 +386,10 @@ void VU_Thread::Get_MTVUChanges()
 	{
 		mtvuInterrupts.fetch_and(~InterruptFlagFinish, std::memory_order_relaxed);
 		GUNIT_WARN("Finish firing");
-		CSRreg.FINISH = true;
 		gifUnit.gsFINISH.gsFINISHFired = false;
+		gifUnit.gsFINISH.gsFINISHPending = true;
 
-		if (!gifRegs.stat.APATH)
+		if (!gifUnit.checkPaths(false, true, true, true))
 			Gif_FinishIRQ();
 	}
 	if (interrupts & InterruptFlagLabel)
@@ -415,8 +407,9 @@ void VU_Thread::Get_MTVUChanges()
 	if (interrupts & InterruptFlagVUEBit)
 	{
 		mtvuInterrupts.fetch_and(~InterruptFlagVUEBit, std::memory_order_relaxed);
-		
-		VU0.VI[REG_VPU_STAT].UL &= ~0xFF00;
+
+		if(INSTANT_VU1)
+			VU0.VI[REG_VPU_STAT].UL &= ~0xFF00;
 		//DevCon.Warning("E-Bit registered %x", VU0.VI[REG_VPU_STAT].UL);
 	}
 	if (interrupts & InterruptFlagVUTBit)
@@ -458,13 +451,20 @@ void VU_Thread::ExecuteVU(u32 vu_addr, u32 vif_top, u32 vif_itop, u32 fbrst)
 	CommitWritePos();
 	gifUnit.TransferGSPacketData(GIF_TRANS_MTVU, NULL, 0);
 	KickStart();
-	u32 cycles = std::min(Get_vuCycles(), 3000u);
-	cpuRegs.cycle += cycles * EmuConfig.Speedhacks.EECycleSkip;
-	VU0.cycle += cycles * EmuConfig.Speedhacks.EECycleSkip;
+	u32 cycles = std::max(Get_vuCycles(), 4u);
+	u32 skip_cycles = std::min(cycles, 3000u);
+	cpuRegs.cycle += skip_cycles * EmuConfig.Speedhacks.EECycleSkip;
+	VU0.cycle += skip_cycles * EmuConfig.Speedhacks.EECycleSkip;
 	Get_MTVUChanges();
+
+	if (!INSTANT_VU1)
+	{
+		VU0.VI[REG_VPU_STAT].UL |= 0x100;
+		CPU_INT(VU_MTVU_BUSY, cycles);
+	}
 }
 
-void VU_Thread::VifUnpack(vifStruct& _vif, VIFregisters& _vifRegs, u8* data, u32 size)
+void VU_Thread::VifUnpack(vifStruct& _vif, VIFregisters& _vifRegs, const u8* data, u32 size)
 {
 	MTVU_LOG("MTVU - VifUnpack!");
 	u32 vif_copy_size = (uptr)&_vif.StructEnd - (uptr)&_vif.tag;
@@ -478,7 +478,7 @@ void VU_Thread::VifUnpack(vifStruct& _vif, VIFregisters& _vifRegs, u8* data, u32
 	KickStart();
 }
 
-void VU_Thread::WriteMicroMem(u32 vu_micro_addr, void* data, u32 size)
+void VU_Thread::WriteMicroMem(u32 vu_micro_addr, const void* data, u32 size)
 {
 	MTVU_LOG("MTVU - WriteMicroMem!");
 	ReserveSpace(3 + size_u32(size));
@@ -490,7 +490,7 @@ void VU_Thread::WriteMicroMem(u32 vu_micro_addr, void* data, u32 size)
 	KickStart();
 }
 
-void VU_Thread::WriteDataMem(u32 vu_data_addr, void* data, u32 size)
+void VU_Thread::WriteDataMem(u32 vu_data_addr, const void* data, u32 size)
 {
 	MTVU_LOG("MTVU - WriteDataMem!");
 	ReserveSpace(3 + size_u32(size));

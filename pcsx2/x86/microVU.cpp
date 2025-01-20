@@ -1,60 +1,20 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-// Micro VU recompiler! - author: cottonvibes(@gmail.com)
-
-#include "PrecompiledHeader.h"
 #include "microVU.h"
 
 #include "common/AlignedMalloc.h"
 #include "common/Perf.h"
+#include "common/StringUtil.h"
 
 //------------------------------------------------------------------
 // Micro VU - Main Functions
 //------------------------------------------------------------------
-alignas(__pagesize) static u8 vu0_RecDispatchers[mVUdispCacheSize];
-alignas(__pagesize) static u8 vu1_RecDispatchers[mVUdispCacheSize];
-
-static __fi void mVUthrowHardwareDeficiency(const char* extFail, int vuIndex)
-{
-	throw Exception::HardwareDeficiency()
-		.SetDiagMsg(fmt::format("microVU{} recompiler init failed: %s is not available.", vuIndex, extFail))
-		.SetUserMsg(fmt::format("{} Extensions not found.  microVU requires a host CPU with SSE4 extensions.", extFail));
-}
-
-void mVUreserveCache(microVU& mVU)
-{
-
-	mVU.cache_reserve = new RecompiledCodeReserve(fmt::format("Micro VU{} Recompiler Cache", mVU.index), _16mb);
-	mVU.cache_reserve->SetProfilerName(fmt::format("mVU{}rec", mVU.index));
-
-	mVU.cache = mVU.index
-		? (u8*)mVU.cache_reserve->Reserve(GetVmMemory().MainMemory(), HostMemoryMap::mVU1recOffset, mVU.cacheSize * _1mb)
-		: (u8*)mVU.cache_reserve->Reserve(GetVmMemory().MainMemory(), HostMemoryMap::mVU0recOffset, mVU.cacheSize * _1mb);
-
-	mVU.cache_reserve->ThrowIfNotOk();
-}
 
 // Only run this once per VU! ;)
 void mVUinit(microVU& mVU, uint vuIndex)
 {
-
-	if (!x86caps.hasStreamingSIMD4Extensions)
-		mVUthrowHardwareDeficiency("SSE4", vuIndex);
-
-	memzero(mVU.prog);
+	std::memset(&mVU.prog, 0, sizeof(mVU.prog));
 
 	mVU.index        =  vuIndex;
 	mVU.cop2         =  0;
@@ -62,18 +22,8 @@ void mVUinit(microVU& mVU, uint vuIndex)
 	mVU.microMemSize = (mVU.index ? 0x4000 : 0x1000);
 	mVU.progSize     = (mVU.index ? 0x4000 : 0x1000) / 4;
 	mVU.progMemMask  =  mVU.progSize-1;
-	mVU.cacheSize    =  mVUcacheReserve;
-	mVU.cache        = NULL;
-	mVU.dispCache    = NULL;
-	mVU.startFunct   = NULL;
-	mVU.exitFunct    = NULL;
-
-	mVUreserveCache(mVU);
-
-	if (vuIndex)
-		mVU.dispCache = vu1_RecDispatchers;
-	else
-		mVU.dispCache = vu0_RecDispatchers;
+	mVU.cache        = vuIndex ? SysMemory::GetVU1Rec() : SysMemory::GetVU0Rec();
+	mVU.prog.x86end  = (vuIndex ? SysMemory::GetVU1RecEnd() : SysMemory::GetVU0RecEnd()) - (mVUcacheSafeZone * _1mb);
 
 	mVU.regAlloc.reset(new microRegAlloc(mVU.index));
 }
@@ -81,7 +31,6 @@ void mVUinit(microVU& mVU, uint vuIndex)
 // Resets Rec Data
 void mVUreset(microVU& mVU, bool resetReserve)
 {
-
 	if (THREAD_VU1)
 	{
 		DevCon.Warning("mVU Reset");
@@ -92,17 +41,13 @@ void mVUreset(microVU& mVU, bool resetReserve)
 		}
 		VU0.VI[REG_VPU_STAT].UL &= ~0x100;
 	}
-	// Restore reserve to uncommitted state
-	if (resetReserve)
-		mVU.cache_reserve->Reset();
 
-	HostSys::MemProtect(mVU.dispCache, mVUdispCacheSize, PageAccess_ReadWrite());
-	memset(mVU.dispCache, 0xcc, mVUdispCacheSize);
-
-	x86SetPtr(mVU.dispCache);
+	xSetPtr(mVU.cache);
 	mVUdispatcherAB(mVU);
 	mVUdispatcherCD(mVU);
-	mVUemitSearch();
+	mVUGenerateWaitMTVU(mVU);
+	mVUGenerateCopyPipelineState(mVU);
+	mVUGenerateCompareState(mVU);
 
 	mVU.regs().nextBlockCycles = 0;
 	memset(&mVU.prog.lpState, 0, sizeof(mVU.prog.lpState));
@@ -116,10 +61,8 @@ void mVUreset(microVU& mVU, bool resetReserve)
 	mVU.prog.curFrame =  0;
 
 	// Setup Dynarec Cache Limits for Each Program
-	u8* z = mVU.cache;
-	mVU.prog.x86start = z;
-	mVU.prog.x86ptr   = z;
-	mVU.prog.x86end   = z + ((mVU.cacheSize - mVUcacheSafeZone) * _1mb);
+	mVU.prog.x86start = xGetAlignedCallTarget();
+	mVU.prog.x86ptr   = mVU.prog.x86start;
 
 	for (u32 i = 0; i < (mVU.progSize / 2); i++)
 	{
@@ -137,21 +80,11 @@ void mVUreset(microVU& mVU, bool resetReserve)
 		mVU.prog.quick[i].block = NULL;
 		mVU.prog.quick[i].prog = NULL;
 	}
-
-	HostSys::MemProtect(mVU.dispCache, mVUdispCacheSize, PageAccess_ExecOnly());
-
-	if (mVU.index)
-		Perf::any.map((uptr)&mVU.dispCache, mVUdispCacheSize, "mVU1 Dispatcher");
-	else
-		Perf::any.map((uptr)&mVU.dispCache, mVUdispCacheSize, "mVU0 Dispatcher");
 }
 
 // Free Allocated Resources
 void mVUclose(microVU& mVU)
 {
-
-	safe_delete(mVU.cache_reserve);
-
 	// Delete Programs and Block Managers
 	for (u32 i = 0; i < (mVU.progSize / 2); i++)
 	{
@@ -172,7 +105,7 @@ __fi void mVUclear(mV, u32 addr, u32 size)
 	if (!mVU.prog.cleared)
 	{
 		mVU.prog.cleared = 1; // Next execution searches/creates a new microprogram
-		memzero(mVU.prog.lpState); // Clear pipeline state
+		std::memset(&mVU.prog.lpState, 0, sizeof(mVU.prog.lpState)); // Clear pipeline state
 		for (u32 i = 0; i < (mVU.progSize / 2); i++)
 		{
 			mVU.prog.quick[i].block = NULL; // Clear current quick-reference block
@@ -204,7 +137,8 @@ __ri microProgram* mVUcreateProg(microVU& mVU, int startPC)
 	prog->idx = mVU.prog.total++;
 	prog->ranges = new std::deque<microRange>();
 	prog->startPC = startPC;
-	mVUcacheProg(mVU, *prog); // Cache Micro Program
+	if(doWholeProgCompare)
+		mVUcacheProg(mVU, *prog); // Cache Micro Program
 	double cacheSize = (double)((uptr)mVU.prog.x86end - (uptr)mVU.prog.x86start);
 	double cacheUsed = ((double)((uptr)mVU.prog.x86ptr - (uptr)mVU.prog.x86start)) / (double)_1mb;
 	double cachePerc = ((double)((uptr)mVU.prog.x86ptr - (uptr)mVU.prog.x86start)) / cacheSize * 100;
@@ -217,10 +151,18 @@ __ri microProgram* mVUcreateProg(microVU& mVU, int startPC)
 // Caches Micro Program
 __ri void mVUcacheProg(microVU& mVU, microProgram& prog)
 {
-	if (!mVU.index)
-		memcpy(prog.data, mVU.regs().Micro, 0x1000);
+	if (!doWholeProgCompare)
+	{
+		auto cmpOffset = [&](void* x) { return (u8*)x + mVUrange.start; };
+		memcpy(cmpOffset(prog.data), cmpOffset(mVU.regs().Micro), (mVUrange.end - mVUrange.start));
+	}
 	else
-		memcpy(prog.data, mVU.regs().Micro, 0x4000);
+	{
+		if (!mVU.index)
+			memcpy(prog.data, mVU.regs().Micro, 0x1000);
+		else
+			memcpy(prog.data, mVU.regs().Micro, 0x4000);
+	}
 	mVUdumpProg(mVU, prog);
 }
 
@@ -273,9 +215,9 @@ void mVUprintUniqueRatio(microVU& mVU)
 }
 
 // Compare Cached microProgram to mVU.regs().Micro
-__fi bool mVUcmpProg(microVU& mVU, microProgram& prog, const bool cmpWholeProg)
+__fi bool mVUcmpProg(microVU& mVU, microProgram& prog)
 {
-	if (cmpWholeProg)
+	if (doWholeProgCompare)
 	{
 		if (memcmp((u8*)prog.data, mVU.regs().Micro, mVU.microMemSize))
 			return false;
@@ -284,16 +226,19 @@ __fi bool mVUcmpProg(microVU& mVU, microProgram& prog, const bool cmpWholeProg)
 	{
 		for (const auto& range : *prog.ranges)
 		{
-			auto cmpOffset = [&](void* x) { return (u8*)x + range.start; };
+#if defined(PCSX2_DEVBUILD) || defined(_DEBUG)
 			if ((range.start < 0) || (range.end < 0))
 				DevCon.Error("microVU%d: Negative Range![%d][%d]", mVU.index, range.start, range.end);
+#endif
+			auto cmpOffset = [&](void* x) { return (u8*)x + range.start; };
+
 			if (memcmp(cmpOffset(prog.data), cmpOffset(mVU.regs().Micro), (range.end - range.start)))
 				return false;
 		}
 	}
 	mVU.prog.cleared = 0;
 	mVU.prog.cur = &prog;
-	mVU.prog.isSame = cmpWholeProg ? 1 : -1;
+	mVU.prog.isSame = doWholeProgCompare ? 1 : -1;
 	return true;
 }
 
@@ -309,7 +254,7 @@ _mVUt __fi void* mVUsearchProg(u32 startPC, uptr pState)
 		std::deque<microProgram*>::iterator it(list->begin());
 		for (; it != list->end(); ++it)
 		{
-			bool b = mVUcmpProg(mVU, *it[0], 0);
+			bool b = mVUcmpProg(mVU, *it[0]);
 
 			if (b)
 			{
@@ -359,47 +304,45 @@ _mVUt __fi void* mVUsearchProg(u32 startPC, uptr pState)
 //------------------------------------------------------------------
 // recMicroVU0 / recMicroVU1
 //------------------------------------------------------------------
+
+recMicroVU0 CpuMicroVU0;
+recMicroVU1 CpuMicroVU1;
+
 recMicroVU0::recMicroVU0() { m_Idx = 0; IsInterpreter = false; }
 recMicroVU1::recMicroVU1() { m_Idx = 1; IsInterpreter = false; }
 
 void recMicroVU0::Reserve()
 {
-	if (m_Reserved.exchange(1) == 0)
-		mVUinit(microVU0, 0);
+	mVUinit(microVU0, 0);
 }
 void recMicroVU1::Reserve()
 {
-	if (m_Reserved.exchange(1) == 0)
-	{
-		mVUinit(microVU1, 1);
-		vu1Thread.Open();
-	}
+	mVUinit(microVU1, 1);
+	vu1Thread.Open();
 }
 
-void recMicroVU0::Shutdown() noexcept
+void recMicroVU0::Shutdown()
 {
-	if (m_Reserved.exchange(0) == 1)
-		mVUclose(microVU0);
+	mVUclose(microVU0);
 }
-void recMicroVU1::Shutdown() noexcept
+void recMicroVU1::Shutdown()
 {
-	if (m_Reserved.exchange(0) == 1)
-	{
+	if (vu1Thread.IsOpen())
 		vu1Thread.WaitVU();
-		mVUclose(microVU1);
-	}
+	mVUclose(microVU1);
 }
 
 void recMicroVU0::Reset()
 {
-	if (!pxAssertDev(m_Reserved, "MicroVU0 CPU Provider has not been reserved prior to reset!"))
-		return;
 	mVUreset(microVU0, true);
 }
+
+void recMicroVU0::Step()
+{
+}
+
 void recMicroVU1::Reset()
 {
-	if (!pxAssertDev(m_Reserved, "MicroVU1 CPU Provider has not been reserved prior to reset!"))
-		return;
 	vu1Thread.WaitVU();
 	vu1Thread.Get_MTVUChanges();
 	mVUreset(microVU1, true);
@@ -412,8 +355,6 @@ void recMicroVU0::SetStartPC(u32 startPC)
 
 void recMicroVU0::Execute(u32 cycles)
 {
-	pxAssert(m_Reserved); // please allocate me first! :|
-
 	VU0.flags &= ~VUFLAG_MFLAGSET;
 
 	if (!(VU0.VI[REG_VPU_STAT].UL & 1))
@@ -434,10 +375,12 @@ void recMicroVU1::SetStartPC(u32 startPC)
 	VU1.start_pc = startPC;
 }
 
+void recMicroVU1::Step()
+{
+}
+
 void recMicroVU1::Execute(u32 cycles)
 {
-	pxAssert(m_Reserved); // please allocate me first! :|
-
 	if (!THREAD_VU1)
 	{
 		if (!(VU0.VI[REG_VPU_STAT].UL & 0x100))
@@ -455,53 +398,91 @@ void recMicroVU1::Execute(u32 cycles)
 
 void recMicroVU0::Clear(u32 addr, u32 size)
 {
-	pxAssert(m_Reserved); // please allocate me first! :|
 	mVUclear(microVU0, addr, size);
 }
 void recMicroVU1::Clear(u32 addr, u32 size)
 {
-	pxAssert(m_Reserved); // please allocate me first! :|
 	mVUclear(microVU1, addr, size);
-}
-
-uint recMicroVU0::GetCacheReserve() const
-{
-	return microVU0.cacheSize;
-}
-uint recMicroVU1::GetCacheReserve() const
-{
-	return microVU1.cacheSize;
-}
-
-void recMicroVU0::SetCacheReserve(uint reserveInMegs) const
-{
-	DevCon.WriteLn("microVU0: Changing cache size [%dmb]", reserveInMegs);
-	microVU0.cacheSize = std::min(reserveInMegs, mVUcacheReserve);
-	safe_delete(microVU0.cache_reserve); // I assume this unmaps the memory
-	mVUreserveCache(microVU0); // Need rec-reset after this
-}
-void recMicroVU1::SetCacheReserve(uint reserveInMegs) const
-{
-	DevCon.WriteLn("microVU1: Changing cache size [%dmb]", reserveInMegs);
-	microVU1.cacheSize = std::min(reserveInMegs, mVUcacheReserve);
-	safe_delete(microVU1.cache_reserve); // I assume this unmaps the memory
-	mVUreserveCache(microVU1); // Need rec-reset after this
 }
 
 void recMicroVU1::ResumeXGkick()
 {
-	pxAssert(m_Reserved); // please allocate me first! :|
-
 	if (!(VU0.VI[REG_VPU_STAT].UL & 0x100))
 		return;
 	((mVUrecCallXG)microVU1.startFunctXG)();
 }
 
-void SaveStateBase::vuJITFreeze()
+bool SaveStateBase::vuJITFreeze()
 {
 	if (IsSaving())
 		vu1Thread.WaitVU();
 
 	Freeze(microVU0.prog.lpState);
 	Freeze(microVU1.prog.lpState);
+	return IsOkay();
 }
+
+#if 0
+
+#include <zlib.h>
+
+void DumpVUState(u32 n, u32 pc)
+{
+	const VURegs& r = vuRegs[n];
+	const microVU& mVU = (n == 0) ? microVU0 : microVU1;
+	static FILE* fp = nullptr;
+	static bool fp_opened = false;
+	static u32 counter = 0;
+
+	u32 first = pc >> 31;
+	pc &= 0x7FFFFFFFu;
+	if (first)
+		counter++;
+
+#if 0
+	if (counter == 184639 && pc == 0x0D70)
+		__debugbreak();
+#endif
+
+	if (counter < 0)
+		return;
+
+	if (!fp_opened)
+	{
+		fp = std::fopen("C:\\Dumps\\comp\\vulog.txt", "wb");
+		fp_opened = true;
+	}
+	if (fp)
+	{
+		const microVU& m = (n == 0) ? microVU0 : microVU1;
+		fprintf(fp, "%08d VU%u SPC:%04X xPC:%04X BRANCH:%04X VIBACKUP:%04X", counter, n, r.start_pc, pc, mVU.branch, mVU.VIbackup);
+#if 1
+		//fprintf(fp, " MEM:%08X", crc32(0, (Bytef*)r.Mem, (n == 0) ? VU0_MEMSIZE : VU1_MEMSIZE));
+		fprintf(fp, " MAC %08X %08X %08X %08X [%08X %08X %08X %08X]", r.micro_macflags[3], r.micro_macflags[2], r.micro_macflags[1], r.micro_macflags[0], m.macFlag[3], m.macFlag[2], m.macFlag[1], m.macFlag[0]);
+		fprintf(fp, " CLIP %08X %08X %08X %08X [%08X %08X %08X %08X]", r.micro_clipflags[3], r.micro_clipflags[2], r.micro_clipflags[1], r.micro_clipflags[0], m.clipFlag[3], m.clipFlag[2], m.clipFlag[1], m.clipFlag[0]);
+		fprintf(fp, " STATUS %08X %08X %08X %08X [%08X %08X %08X %08X]", r.micro_statusflags[3], r.micro_statusflags[2], r.micro_statusflags[1], r.micro_statusflags[0], m.statFlag[3], m.statFlag[2], m.statFlag[1], m.statFlag[0]);
+
+		for (u32 i = 0; i < 32; i++)
+		{
+			const VECTOR& v = r.VF[i];
+			fprintf(fp, " VF%u: %08X%08X%08X%08X (%f,%f,%f,%f)", i, v.UL[3], v.UL[2], v.UL[1], v.UL[0], v.F[3], v.F[2], v.F[1], v.F[0]);
+		}
+
+		for (u32 i = 0; i < 32; i++)
+		{
+			const REG_VI& v = r.VI[i];
+			fprintf(fp, " VI%u: %08X", i, v.UL);
+		}
+
+		fprintf(fp, " ACC: %08X%08X%08X%08X (%f,%f,%f,%f)", r.ACC.UL[3], r.ACC.UL[2], r.ACC.UL[1], r.ACC.UL[0],
+			r.ACC.F[3], r.ACC.F[2], r.ACC.F[1], r.ACC.F[0]);
+		fprintf(fp, " Q: %08X (%f)", r.q.UL, r.q.F);
+		fprintf(fp, " P: %08X (%f)\n", r.p.UL, r.p.F);
+#else
+		fprintf(fp, " REG:%08X\n", crc32(0, (Bytef*)&r, offsetof(VURegs, idx)));
+#endif
+		//fflush(fp);
+	}
+}
+
+#endif

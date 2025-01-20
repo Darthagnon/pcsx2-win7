@@ -1,26 +1,14 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
-#include "GS/GSCodeBuffer.h"
 #include "GS/GSExtra.h"
 #include "GS/Renderers/SW/GSScanlineEnvironment.h"
-#include "common/emitter/tools.h"
 
-#include <xbyak/xbyak_util.h>
+#include "common/HostSys.h"
+
+#include <cinttypes>
 
 template <class KEY, class VALUE>
 class GSFunctionMap
@@ -94,11 +82,11 @@ public:
 			m_active->actual += actual;
 			m_active->total += total;
 
-			ASSERT(m_active->total >= m_active->actual);
+			pxAssert(m_active->total >= m_active->actual);
 		}
 	}
 
-	virtual void PrintStats()
+	void PrintStats()
 	{
 		u64 totalTicks = 0;
 
@@ -108,7 +96,7 @@ public:
 			totalTicks += p->ticks;
 		}
 
-		double tick_us = 1.0 / x86capabilities::CachedMHz();
+		double tick_us = 1.0 / GetTickFrequency();
 		double tick_ms = tick_us / 1000;
 		double tick_ns = tick_us * 1000;
 
@@ -129,7 +117,7 @@ public:
 			{
 				u64 tpf = p->ticks / p->frames;
 
-				printf("%016llx | %6llu | %5llu | %5.2f%% %5.1f %6.1f | %8llu %6llu %5.2f%%\n",
+				printf("%016" PRIx64 " | %6" PRIu64 " | %5" PRIu64 " | %5.2f%% %5.1f %6.1f | %8" PRIu64 " %6" PRIu64 " %5.2f%%\n",
 					(u64)key,
 					p->frames,
 					p->prims / p->frames,
@@ -144,47 +132,45 @@ public:
 	}
 };
 
-class GSCodeGenerator : public Xbyak::CodeGenerator
+// --------------------------------------------------------------------------------------
+//  GSCodeReserve
+// --------------------------------------------------------------------------------------
+// Stores code buffers for the GS software JIT.
+//
+namespace GSCodeReserve
 {
-protected:
-	Xbyak::util::Cpu m_cpu;
+	void ResetMemory();
 
-public:
-	GSCodeGenerator(void* code, size_t maxsize)
-		: Xbyak::CodeGenerator(maxsize, code)
-	{
-	}
-};
+	size_t GetMemoryUsed();
+
+	u8* ReserveMemory(size_t size);
+	void CommitMemory(size_t size);
+}
 
 template <class CG, class KEY, class VALUE>
 class GSCodeGeneratorFunctionMap : public GSFunctionMap<KEY, VALUE>
 {
 	std::string m_name;
-	void* m_param;
 	std::unordered_map<u64, VALUE> m_cgmap;
-	GSCodeBuffer m_cb;
-	size_t m_total_code_size;
 
 	enum { MAX_SIZE = 8192 };
 
 public:
-	GSCodeGeneratorFunctionMap(const char* name, void* param)
+	GSCodeGeneratorFunctionMap(std::string name)
 		: m_name(name)
-		, m_param(param)
-		, m_total_code_size(0)
 	{
 	}
 
-	~GSCodeGeneratorFunctionMap()
+	~GSCodeGeneratorFunctionMap() = default;
+
+	void Clear()
 	{
-#ifdef _DEBUG
-		fprintf(stderr, "%s generated %zu bytes of instruction\n", m_name.c_str(), m_total_code_size);
-#endif
+		m_cgmap.clear();
 	}
 
 	VALUE GetDefaultFunction(KEY key)
 	{
-		VALUE ret = NULL;
+		VALUE ret = nullptr;
 
 		auto i = m_cgmap.find(key);
 
@@ -194,66 +180,28 @@ public:
 		}
 		else
 		{
-			void* code_ptr = m_cb.GetBuffer(MAX_SIZE);
+			HostSys::BeginCodeWrite();
 
-			CG* cg = new CG(m_param, key, code_ptr, MAX_SIZE);
-			ASSERT(cg->getSize() < MAX_SIZE);
+			u8* code_ptr = GSCodeReserve::ReserveMemory(MAX_SIZE);
+			CG cg(key, code_ptr, MAX_SIZE);
+			cg.Generate();
+			pxAssert(cg.GetSize() < MAX_SIZE);
 
 #if 0
-			fprintf(stderr, "%s Location:%p Size:%zu Key:%llx\n", m_name.c_str(), code_ptr, cg->getSize(), (u64)key);
+			fprintf(stderr, "%s Location:%p Size:%zu Key:%llx\n", m_name.c_str(), code_ptr, cg.getSize(), (u64)key);
 			GSScanlineSelector sel(key);
 			sel.Print();
 #endif
 
-			m_total_code_size += cg->getSize();
+			const u32 size = static_cast<u32>(cg.GetSize());
+			GSCodeReserve::CommitMemory(size);
 
-			m_cb.ReleaseBuffer(cg->getSize());
+			HostSys::EndCodeWrite();
+			HostSys::FlushInstructionCache(code_ptr, static_cast<u32>(size));
 
-			ret = (VALUE)cg->getCode();
+			ret = (VALUE)cg.GetCode();
 
 			m_cgmap[key] = ret;
-
-#ifdef ENABLE_VTUNE
-
-			// vtune method registration
-
-			// if(iJIT_IsProfilingActive()) // always > 0
-			{
-				std::string name = format("%s<%016llx>()", m_name.c_str(), (u64)key);
-
-				iJIT_Method_Load ml;
-
-				memset(&ml, 0, sizeof(ml));
-
-				ml.method_id = iJIT_GetNewMethodID();
-				ml.method_name = (char*)name.c_str();
-				ml.method_load_address = (void*)cg->getCode();
-				ml.method_size = (unsigned int)cg->getSize();
-
-				iJIT_NotifyEvent(iJVM_EVENT_TYPE_METHOD_LOAD_FINISHED, &ml);
-/*
-				name = format("c:/temp1/%s_%016llx.bin", m_name.c_str(), (u64)key);
-
-				if(FILE* fp = fopen(name.c_str(), "wb"))
-				{
-					fputc(0x0F, fp); fputc(0x0B, fp);
-					fputc(0xBB, fp); fputc(0x6F, fp); fputc(0x00, fp); fputc(0x00, fp); fputc(0x00, fp);
-					fputc(0x64, fp); fputc(0x67, fp); fputc(0x90, fp);
-
-					fwrite(cg->getCode(), cg->getSize(), 1, fp);
-
-					fputc(0xBB, fp); fputc(0xDE, fp); fputc(0x00, fp); fputc(0x00, fp); fputc(0x00, fp);
-					fputc(0x64, fp); fputc(0x67, fp); fputc(0x90, fp);
-					fputc(0x0F, fp); fputc(0x0B, fp);
-
-					fclose(fp);
-				}
-*/
-			}
-
-#endif
-
-			delete cg;
 		}
 
 		return ret;

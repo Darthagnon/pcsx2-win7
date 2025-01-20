@@ -1,20 +1,6 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-
-#include "PrecompiledHeader.h"
 #include "Common.h"
 #include "Hardware.h"
 #include "MTVU.h"
@@ -72,12 +58,12 @@ tDMA_TAG DMACh::dma_tag()
 
 std::string DMACh::cmq_to_str() const
 {
-	return StringUtil::StdStringFromFormat("chcr = %lx, madr = %lx, qwc  = %lx", chcr._u32, madr, qwc);
+	return StringUtil::StdStringFromFormat("chcr = %x, madr = %x, qwc  = %x", chcr._u32, madr, qwc);
 }
 
 std::string DMACh::cmqt_to_str() const
 {
-	return StringUtil::StdStringFromFormat("chcr = %lx, madr = %lx, qwc  = %lx, tadr = %1x", chcr._u32, madr, qwc, tadr);
+	return StringUtil::StdStringFromFormat("chcr = %x, madr = %x, qwc  = %x, tadr = %1x", chcr._u32, madr, qwc, tadr);
 }
 
 __fi void throwBusError(const char *s)
@@ -105,7 +91,7 @@ __fi tDMA_TAG* SPRdmaGetAddr(u32 addr, bool write)
 	// FIXME: Why??? DMA uses physical addresses
 	addr &= 0x1ffffff0;
 
-	if (addr < Ps2MemSize::MainRam)
+	if (addr < Ps2MemSize::ExposedRam)
 	{
 		return (tDMA_TAG*)&eeMem->Main[addr];
 	}
@@ -120,7 +106,7 @@ __fi tDMA_TAG* SPRdmaGetAddr(u32 addr, bool write)
 			DevCon.Warning("MTVU: SPR Accessing VU1 Memory");
 			vu1Thread.WaitVU();
 		}
-		
+
 		//Access for VU Memory
 
 		if((addr >= 0x1100c000) && (addr < 0x11010000))
@@ -134,7 +120,7 @@ __fi tDMA_TAG* SPRdmaGetAddr(u32 addr, bool write)
 			//DevCon.Warning("VU0 Mem %x", addr);
 			return (tDMA_TAG*)(VU0.Mem + (addr & 0xff0));
 		}
-		
+
 		//Possibly not needed but the manual doesn't say SPR cannot access it.
 		if((addr >= 0x11000000) && (addr < 0x11004000))
 		{
@@ -147,8 +133,8 @@ __fi tDMA_TAG* SPRdmaGetAddr(u32 addr, bool write)
 			//DevCon.Warning("VU1 Micro %x", addr);
 			return (tDMA_TAG*)(VU1.Micro + (addr & 0x3ff0));
 		}
-		
-		
+
+
 		// Unreachable
 		return NULL;
 	}
@@ -168,7 +154,7 @@ __ri tDMA_TAG *dmaGetAddr(u32 addr, bool write)
 	// FIXME: Why??? DMA uses physical addresses
 	addr &= 0x1ffffff0;
 
-	if (addr < Ps2MemSize::MainRam)
+	if (addr < Ps2MemSize::ExposedRam)
 	{
 		return (tDMA_TAG*)&eeMem->Main[addr];
 	}
@@ -255,7 +241,7 @@ static __ri void DmaExec( void (*func)(), u32 mem, u32 value )
 				cpuClearInt( 11 );
 				QueuedDMA._u16 &= ~(1 << 11); //Clear any queued DMA requests for this channel
 			}
-				
+
 			cpuClearInt( channel );
 			QueuedDMA._u16 &= ~(1 << channel); //Clear any queued DMA requests for this channel
 		}
@@ -305,9 +291,9 @@ __fi u32 dmacRead32( u32 mem )
 		if (++counter == 8)
 			counter = 2;
 		// Set OPH and APATH from counter, cycling paths and alternating OPH
-		return gifRegs.stat._u32 & ~(7 << 9) | (counter & 1 ? counter << 9 : 0);
+		return (gifRegs.stat._u32 & ~(7 << 9)) | ((counter & 1) ? (counter << 9) : 0);
 	}
-	
+
 	return psHu32(mem);
 }
 

@@ -1,27 +1,14 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #include "videodev.h"
+#include "common/RedtapeWindows.h"
+#include "common/RedtapeWilCom.h"
+
+#include <dshow.h>
 #include <mutex>
 
 #pragma comment(lib, "strmiids")
-
-#include <windows.h>
-#include <dshow.h>
-
-#include <wil/com.h>
 
 extern "C" {
 extern GUID IID_ISampleGrabberCB;
@@ -30,15 +17,13 @@ extern GUID CLSID_NullRenderer;
 }
 
 #pragma region qedit.h
-struct __declspec(uuid("0579154a-2b53-4994-b0d0-e773148eff85"))
-	ISampleGrabberCB : IUnknown
+struct __declspec(uuid("0579154a-2b53-4994-b0d0-e773148eff85")) ISampleGrabberCB : IUnknown
 {
 	virtual HRESULT __stdcall SampleCB(double SampleTime, struct IMediaSample* pSample) = 0;
 	virtual HRESULT __stdcall BufferCB(double SampleTime, unsigned char* pBuffer, long BufferLen) = 0;
 };
 
-struct __declspec(uuid("6b652fff-11fe-4fce-92ad-0266b5d7c78f"))
-	ISampleGrabber : IUnknown
+struct __declspec(uuid("6b652fff-11fe-4fce-92ad-0266b5d7c78f")) ISampleGrabber : IUnknown
 {
 	virtual HRESULT __stdcall SetOneShot(long OneShot) = 0;
 	virtual HRESULT __stdcall SetMediaType(struct _AMMediaType* pType) = 0;
@@ -49,8 +34,7 @@ struct __declspec(uuid("6b652fff-11fe-4fce-92ad-0266b5d7c78f"))
 	virtual HRESULT __stdcall SetCallback(struct ISampleGrabberCB* pCallback, long WhichMethodToCallback) = 0;
 };
 
-struct __declspec(uuid("c1f400a0-3f08-11d3-9f0b-006008039e37"))
-	SampleGrabber;
+struct __declspec(uuid("c1f400a0-3f08-11d3-9f0b-006008039e37")) SampleGrabber;
 
 #pragma endregion
 
@@ -71,6 +55,7 @@ namespace usb_eyetoy
 {
 	namespace windows_api
 	{
+		std::vector<std::pair<std::string, std::string>> getDevList();
 
 		typedef void (*DShowVideoCaptureCallback)(unsigned char* data, int len, int bitsperpixel);
 
@@ -80,12 +65,10 @@ namespace usb_eyetoy
 			size_t length = 0;
 		};
 
-		static const char* APINAME = "DirectShow";
-
 		class DirectShow : public VideoDevice
 		{
 		public:
-			DirectShow(int port);
+			DirectShow();
 			~DirectShow();
 			int Open(int width, int height, FrameFormat format, int mirror);
 			int Close();
@@ -93,24 +76,13 @@ namespace usb_eyetoy
 			void SetMirroring(bool state);
 			int Reset() { return 0; };
 
-			static const TCHAR* Name()
-			{
-				return TEXT("DirectShow");
-			}
-			static int Configure(int port, const char* dev_type, void* data);
-
-			int Port() { return mPort; }
-			void Port(int port) { mPort = port; }
-
 		protected:
 			void SetCallback(DShowVideoCaptureCallback cb) { callbackhandler->SetCallback(cb); }
-			void Start();
+			bool Start();
 			void Stop();
-			int InitializeDevice(std::wstring selectedDevice);
+			int InitializeDevice(const std::wstring& selectedDevice);
 
 		private:
-			int mPort;
-
 			wil::unique_couninitialize_call dshowCoInitialize;
 			ICaptureGraphBuilder2* pGraphBuilder;
 			IFilterGraph2* pGraph;

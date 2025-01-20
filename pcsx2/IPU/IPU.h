@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -24,7 +12,7 @@
 
 #define IPU_INT_TO( cycles )  if(!(cpuRegs.interrupt & (1<<4))) CPU_INT( DMAC_TO_IPU, cycles )
 #define IPU_INT_FROM( cycles )  CPU_INT( DMAC_FROM_IPU, cycles )
-
+#define IPU_INT_PROCESS( cycles ) if(!(cpuRegs.interrupt & (1 << IPU_PROCESS))) CPU_INT( IPU_PROCESS, cycles )
 //
 // Bitfield Structures
 //
@@ -64,6 +52,7 @@ union tIPU_CTRL {
 	};
 	u32 _u32;
 
+	tIPU_CTRL() = default;
 	tIPU_CTRL( u32 val ) { _u32 = val; }
 
     // CTRL = the first 16 bits of ctrl [0x8000ffff], + value for the next 16 bits,
@@ -132,7 +121,7 @@ struct alignas(16) tIPU_BP {
 				// be possible -- so if the fill fails we'll only return 0 if we don't have enough
 				// remaining bits in the FIFO to fill the request.
 				// Used to do ((FP!=0) && (BP + bits) <= 128) if we get here there's defo not enough data now though
-
+				IPUCoreStatus.WaitingOnIPUTo = true;
 				return false;
 			}
 
@@ -165,6 +154,7 @@ union tIPU_CMD_IDEC
 
 	u32 _u32;
 
+	tIPU_CMD_IDEC() = default;
 	tIPU_CMD_IDEC( u32 val ) { _u32 = val; }
 
 	bool test(u32 flags) const { return !!(_u32 & flags); }
@@ -189,6 +179,7 @@ union tIPU_CMD_BDEC
 	};
 	u32 _u32;
 
+	tIPU_CMD_BDEC() = default;
 	tIPU_CMD_BDEC( u32 val ) { _u32 = val; }
 
 	bool test(u32 flags) const { return !!(_u32 & flags); }
@@ -210,6 +201,7 @@ union tIPU_CMD_CSC
 	};
 	u32 _u32;
 
+	tIPU_CMD_CSC() = default;
 	tIPU_CMD_CSC( u32 val ){ _u32 = val; }
 
 	bool test(u32 flags) const { return !!(_u32 & flags); }
@@ -275,7 +267,7 @@ union tIPU_cmd
 			u32 current;
 		};
 	};
-	
+
 	u128 _u128[2];
 
 	void clear();
@@ -288,23 +280,20 @@ union tIPU_cmd
 
 static IPUregisters& ipuRegs = (IPUregisters&)eeHw[0x2000];
 
+extern bool FMVstarted;
+extern bool EnableFMV;
+
 alignas(16) extern tIPU_cmd ipu_cmd;
-extern int coded_block_pattern;
-extern bool CommandExecuteQueued;
+extern uint eecount_on_last_vdec;
 
 extern void ipuReset();
 
 extern u32 ipuRead32(u32 mem);
-extern RETURNS_R64 ipuRead64(u32 mem);
+extern u64 ipuRead64(u32 mem);
 extern bool ipuWrite32(u32 mem,u32 value);
 extern bool ipuWrite64(u32 mem,u64 value);
 
 extern void IPUCMD_WRITE(u32 val);
 extern void ipuSoftReset();
 extern void IPUProcessInterrupt();
-
-extern u8 getBits64(u8 *address, bool advance);
-extern u8 getBits32(u8 *address, bool advance);
-extern u8 getBits16(u8 *address, bool advance);
-extern u8 getBits8(u8 *address, bool advance);
 

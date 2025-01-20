@@ -1,20 +1,6 @@
-/*  PCSX2 - PS2 Emulator for PCs
-*  Copyright (C) 2016-2021  PCSX2 Dev Team
-*  Copyright (C) 2016 Wisi
-*
-*  PCSX2 is free software: you can redistribute it and/or modify it under the terms
-*  of the GNU Lesser General Public License as published by the Free Software Found-
-*  ation, either version 3 of the License, or (at your option) any later version.
-*
-*  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
-*  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-*  PURPOSE.  See the GNU General Public License for more details.
-*
-*  You should have received a copy of the GNU General Public License along with PCSX2.
-*  If not, see <http://www.gnu.org/licenses/>.
-*/
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "ps2/Iop/IopHw_Internal.h"
 #include "ps2/HwInternal.h"
 #include "ps2/pgif.h"
@@ -521,7 +507,6 @@ void fillFifoOnDrain()
 
 void drainPgpuDmaLl()
 {
-	u32 data = 0;
 	if (!dma.state.ll_active)
 		return;
 
@@ -550,7 +535,7 @@ void drainPgpuDmaLl()
 		else
 		{
 			//Or the beginning of a new one
-			data = iopMemRead32(dma.ll_dma.next_address);
+			u32 data = iopMemRead32(dma.ll_dma.next_address);
 			PGPU_DMA_LOG( "Next PGPU LL DMA header= %08X  ", data);
 			dmaRegs.madr.address = data & 0x00FFFFFF; //Copy the address in MADR.
 			dma.ll_dma.data_read_address = dma.ll_dma.next_address + 4; //start of data section of packet
@@ -562,7 +547,7 @@ void drainPgpuDmaLl()
 	else
 	{
 		//We are in the middle of linked list transfer
-		data = iopMemRead32(dma.ll_dma.data_read_address);
+		u32 data = iopMemRead32(dma.ll_dma.data_read_address);
 		PGPU_DMA_LOG( "PGPU LL DMA data= %08X  addr %08X ", data, dma.ll_dma.data_read_address);
 		ringBufPut(&rb_gp0, &data);
 		dma.ll_dma.data_read_address += 4;
@@ -572,7 +557,6 @@ void drainPgpuDmaLl()
 
 void drainPgpuDmaNrToGpu()
 {
-	u32 data = 0;
 	if (!dma.state.to_gpu_active)
 		return;
 
@@ -582,7 +566,7 @@ void drainPgpuDmaNrToGpu()
 
 	if (dma.normal.current_word < dma.normal.total_words)
 	{
-		data = iopMemRead32(dma.normal.address);
+		u32 data = iopMemRead32(dma.normal.address);
 		PGPU_DMA_LOG( "To GPU Normal DMA data= %08X  addr %08X ", data, dma.ll_dma.data_read_address);
 
 		ringBufPut(&rb_gp0, &data);
@@ -610,12 +594,12 @@ void drainPgpuDmaNrToGpu()
 
 void drainPgpuDmaNrToIop()
 {
-	u32 data = 0;
 	if (!dma.state.to_iop_active || rb_gp0.count <= 0)
 		return;
 
 	if (dma.normal.current_word < dma.normal.total_words)
 	{
+		u32 data = 0;
 		//This is not the best way, but... is there another?
 		ringBufGet(&rb_gp0, &data);
 		iopMemWrite32(dma.normal.address, data);

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: MIT
+
 /*
  * QEMU USB emulation
  *
@@ -24,11 +27,14 @@
  * THE SOFTWARE.
  */
 
-#include "PrecompiledHeader.h"
-#include "USB/platcompat.h"
-#include "vl.h"
-#include "iov.h"
-//#include "trace.h"
+#include "USB/qemu-usb/qusb.h"
+
+#include "common/Console.h"
+
+#include <cassert>
+#include <climits>
+#include <cstring>
+#include <utility>
 
 void usb_pick_speed(USBPort* port)
 {
@@ -39,9 +45,8 @@ void usb_pick_speed(USBPort* port)
 		USB_SPEED_LOW,
 	};
 	USBDevice* udev = port->dev;
-	int i;
 
-	for (i = 0; i < (int)ARRAY_SIZE(speeds); i++)
+	for (u32 i = 0; i < std::size(speeds); i++)
 	{
 		if ((udev->speedmask & (1 << speeds[i])) &&
 			(port->speedmask & (1 << speeds[i])))
@@ -56,7 +61,7 @@ void usb_attach(USBPort* port)
 {
 	USBDevice* dev = port->dev;
 
-	assert(dev != NULL);
+	assert(dev != nullptr);
 	assert(dev->attached);
 	assert(dev->state == USB_STATE_NOTATTACHED);
 	usb_pick_speed(port);
@@ -69,7 +74,7 @@ void usb_detach(USBPort* port)
 {
 	USBDevice* dev = port->dev;
 
-	assert(dev != NULL);
+	assert(dev != nullptr);
 	assert(dev->state != USB_STATE_NOTATTACHED);
 	port->ops->detach(port);
 	dev->state = USB_STATE_NOTATTACHED;
@@ -85,7 +90,7 @@ void usb_port_reset(USBPort* port)
 {
 	USBDevice* dev = port->dev;
 
-	assert(dev != NULL);
+	assert(dev != nullptr);
 	usb_detach(port);
 	usb_attach(port);
 	usb_device_reset(dev);
@@ -93,7 +98,7 @@ void usb_port_reset(USBPort* port)
 
 void usb_device_reset(USBDevice* dev)
 {
-	if (dev == NULL || !dev->attached)
+	if (dev == nullptr || !dev->attached)
 	{
 		return;
 	}
@@ -135,13 +140,13 @@ static void do_token_setup(USBDevice* s, USBPacket* p)
 {
 	int request, value, index;
 
-	if (p->iov.size != 8)
+	if (p->buffer_size != 8)
 	{
 		p->status = USB_RET_STALL;
 		return;
 	}
 
-	usb_packet_copy(p, s->setup_buf, p->iov.size);
+	usb_packet_copy(p, s->setup_buf, p->buffer_size);
 	s->setup_index = 0;
 	p->actual_length = 0;
 	s->setup_len = (s->setup_buf[7] << 8) | s->setup_buf[6];
@@ -218,9 +223,9 @@ static void do_token_in(USBDevice* s, USBPacket* p)
 			if (s->setup_buf[0] & USB_DIR_IN)
 			{
 				int len = s->setup_len - s->setup_index;
-				if ((size_t)len > p->iov.size)
+				if ((size_t)len > p->buffer_size)
 				{
-					len = p->iov.size;
+					len = p->buffer_size;
 				}
 				usb_packet_copy(p, s->data_buf + s->setup_index, len);
 				s->setup_index += len;
@@ -261,9 +266,9 @@ static void do_token_out(USBDevice* s, USBPacket* p)
 			if (!(s->setup_buf[0] & USB_DIR_IN))
 			{
 				int len = s->setup_len - s->setup_index;
-				if ((size_t)len > p->iov.size)
+				if ((size_t)len > p->buffer_size)
 				{
-					len = p->iov.size;
+					len = p->buffer_size;
 				}
 				usb_packet_copy(p, s->data_buf + s->setup_index, len);
 				s->setup_index += len;
@@ -376,13 +381,13 @@ void usb_generic_async_ctrl_complete(USBDevice* s, USBPacket* p)
 	usb_packet_complete(s, p);
 }
 
-USBDevice* usb_find_device(USBPort* port, uint8_t addr)
+USBDevice* usb_find_device(USBPort* port, u8 addr)
 {
 	USBDevice* dev = port->dev;
 
-	if (dev == NULL || !dev->attached || dev->state != USB_STATE_DEFAULT)
+	if (dev == nullptr || !dev->attached || dev->state != USB_STATE_DEFAULT)
 	{
-		return NULL;
+		return nullptr;
 	}
 	if (dev->addr == addr)
 	{
@@ -444,7 +449,7 @@ static void usb_queue_one(USBPacket* p)
    driver will call usb_packet_complete() when done processing it. */
 void usb_handle_packet(USBDevice* dev, USBPacket* p)
 {
-	if (dev == NULL)
+	if (dev == nullptr)
 	{
 		p->status = USB_RET_NODEV;
 		return;
@@ -452,7 +457,7 @@ void usb_handle_packet(USBDevice* dev, USBPacket* p)
 	assert(dev == p->ep->dev);
 	assert(dev->state == USB_STATE_DEFAULT);
 	usb_packet_check_state(p, USB_PACKET_SETUP);
-	assert(p->ep != NULL);
+	assert(p->ep != nullptr);
 
 	/* Submitting a new packet clears halt */
 	if (p->ep->halted)
@@ -506,7 +511,7 @@ void usb_packet_complete_one(USBDevice* dev, USBPacket* p)
 	assert(p->status != USB_RET_ASYNC && p->status != USB_RET_NAK);
 
 	if (p->status != USB_RET_SUCCESS ||
-		(p->short_not_ok && ((size_t)p->actual_length < p->iov.size)))
+		(p->short_not_ok && ((size_t)p->actual_length < p->buffer_size)))
 	{
 		ep->halted = true;
 	}
@@ -565,12 +570,8 @@ void usb_cancel_packet(USBPacket* p)
 	}
 }
 
-
-void usb_packet_init(USBPacket* p)
-{
-	qemu_iovec_init(&p->iov, 1);
-}
-
+#if 0
+// Unused
 static const char* usb_packet_state_name(USBPacketState state)
 {
 	static const char* name[] = {
@@ -581,12 +582,13 @@ static const char* usb_packet_state_name(USBPacketState state)
 		/*[USB_PACKET_COMPLETE]  =*/"complete",
 		/*[USB_PACKET_CANCELED]  =*/"canceled",
 	};
-	if (state < ARRAY_SIZE(name))
+	if (static_cast<u32>(state) < std::size(name))
 	{
 		return name[state];
 	}
 	return "INVALID";
 }
+#endif
 
 void usb_packet_check_state(USBPacket* p, USBPacketState expected)
 {
@@ -621,7 +623,6 @@ void usb_packet_setup(USBPacket* p, int pid,
 					  uint64_t id, bool short_not_ok, bool int_req)
 {
 	assert(!usb_packet_is_inflight(p));
-	assert(p->iov.iov != NULL);
 	p->id = id;
 	p->pid = pid;
 	p->ep = ep;
@@ -631,31 +632,31 @@ void usb_packet_setup(USBPacket* p, int pid,
 	p->parameter = 0;
 	p->short_not_ok = short_not_ok;
 	p->int_req = int_req;
-	p->combined = NULL;
-	qemu_iovec_reset(&p->iov);
+	p->buffer_ptr = nullptr;
+	p->buffer_size = 0;
 	usb_packet_set_state(p, USB_PACKET_SETUP);
 }
 
 void usb_packet_addbuf(USBPacket* p, void* ptr, size_t len)
 {
-	qemu_iovec_add(&p->iov, ptr, len);
+	assert(!p->buffer_ptr);
+	p->buffer_ptr = static_cast<u8*>(ptr);
+	p->buffer_size = static_cast<unsigned int>(len);
 }
 
 void usb_packet_copy(USBPacket* p, void* ptr, size_t bytes)
 {
-	QEMUIOVector* iov = p->combined ? &p->combined->iov : &p->iov;
-
 	assert(bytes <= INT_MAX);
 	assert(p->actual_length >= 0);
-	assert(p->actual_length + bytes <= iov->size);
+	assert(p->actual_length + bytes <= p->buffer_size);
 	switch (p->pid)
 	{
 		case USB_TOKEN_SETUP:
 		case USB_TOKEN_OUT:
-			iov_to_buf(iov->iov, iov->niov, p->actual_length, ptr, bytes);
+			std::memcpy(ptr, p->buffer_ptr, bytes);
 			break;
 		case USB_TOKEN_IN:
-			iov_from_buf(iov->iov, iov->niov, p->actual_length, ptr, bytes);
+			std::memcpy(p->buffer_ptr, ptr, bytes);
 			break;
 		default:
 			Console.Warning("%s: invalid pid: %x\n", __func__, p->pid);
@@ -666,27 +667,26 @@ void usb_packet_copy(USBPacket* p, void* ptr, size_t bytes)
 
 void usb_packet_skip(USBPacket* p, size_t bytes)
 {
-	QEMUIOVector* iov = p->combined ? &p->combined->iov : &p->iov;
-
 	assert(bytes <= INT_MAX);
 	assert(p->actual_length >= 0);
-	assert(p->actual_length + bytes <= iov->size);
+	assert(p->actual_length + bytes <= p->buffer_size);
 	if (p->pid == USB_TOKEN_IN)
 	{
-		iov_memset(iov->iov, iov->niov, p->actual_length, 0, bytes);
+		std::memset(p->buffer_ptr, 0, bytes);
 	}
 	p->actual_length += bytes;
 }
 
 size_t usb_packet_size(USBPacket* p)
 {
-	return p->combined ? p->combined->iov.size : p->iov.size;
+	return p->buffer_size;
 }
 
 void usb_packet_cleanup(USBPacket* p)
 {
 	assert(!usb_packet_is_inflight(p));
-	qemu_iovec_destroy(&p->iov);
+	p->buffer_ptr = nullptr;
+	p->buffer_size = 0;
 }
 
 void usb_ep_reset(USBDevice* dev)
@@ -785,9 +785,9 @@ struct USBEndpoint* usb_ep_get(USBDevice* dev, int pid, int ep)
 {
 	struct USBEndpoint* eps;
 
-	if (dev == NULL)
+	if (dev == nullptr)
 	{
-		return NULL;
+		return nullptr;
 	}
 	eps = (pid == USB_TOKEN_IN) ? dev->ep_in : dev->ep_out;
 	if (ep == 0)
@@ -799,19 +799,19 @@ struct USBEndpoint* usb_ep_get(USBDevice* dev, int pid, int ep)
 	return eps + ep - 1;
 }
 
-uint8_t usb_ep_get_type(USBDevice* dev, int pid, int ep)
+u8 usb_ep_get_type(USBDevice* dev, int pid, int ep)
 {
 	struct USBEndpoint* uep = usb_ep_get(dev, pid, ep);
 	return uep->type;
 }
 
-void usb_ep_set_type(USBDevice* dev, int pid, int ep, uint8_t type)
+void usb_ep_set_type(USBDevice* dev, int pid, int ep, u8 type)
 {
 	struct USBEndpoint* uep = usb_ep_get(dev, pid, ep);
 	uep->type = type;
 }
 
-void usb_ep_set_ifnum(USBDevice* dev, int pid, int ep, uint8_t ifnum)
+void usb_ep_set_ifnum(USBDevice* dev, int pid, int ep, u8 ifnum)
 {
 	struct USBEndpoint* uep = usb_ep_get(dev, pid, ep);
 	uep->ifnum = ifnum;
@@ -839,7 +839,7 @@ void usb_ep_set_max_packet_size(USBDevice* dev, int pid, int ep,
 	uep->max_packet_size = size * microframes;
 }
 
-void usb_ep_set_max_streams(USBDevice* dev, int pid, int ep, uint8_t raw)
+void usb_ep_set_max_streams(USBDevice* dev, int pid, int ep, u8 raw)
 {
 	struct USBEndpoint* uep = usb_ep_get(dev, pid, ep);
 	int MaxStreams;
@@ -875,7 +875,7 @@ USBPacket* usb_ep_find_packet_by_id(USBDevice* dev, int pid, int ep,
 		}
 	}
 
-	return NULL;
+	return nullptr;
 }
 
 void usb_wakeup(USBDevice* dev)

@@ -6,17 +6,25 @@ on:
       jobName:
         required: true
         type: string
+      artifactPrefixName:
+        required: true
+        type: string
       os:
         required: false
         type: string
-        default: macos-11.0
-      platform:
+        default: macos-14
+      patchesUrl:
         required: false
         type: string
-        default: x64
-      gui:
-        required: true
-        type: string
+        default: https://github.com/PCSX2/pcsx2_patches/releases/latest/download
+      fetchTags:
+        required: false
+        type: boolean
+        default: false
+      stableBuild:
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build_macos:
@@ -26,26 +34,36 @@ jobs:
     timeout-minutes: 90
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
-      BUILDCACHE_COMPRESS_FORMAT: ZSTD
-      BUILDCACHE_COMPRESS_LEVEL: 9
-      BUILDCACHE_MAX_CACHE_SIZE: 536870912 # 512MB
-      BUILDCACHE_DIRECT_MODE: true
-      BUILDCACHE_LOG_FILE: ${{ github.workspace }}\buildcache.log
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: true
+      CCACHE_COMPRESSLEVEL: 9
+      CCACHE_MAXSIZE: 100M
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
+        uses: actions/checkout@v4
+
+      # actions/checkout elides tags, fetch them primarily for releases
+      - name: Fetch Tags
+        if: ${{ inputs.fetchTags }}
+        run: git fetch --tags --no-recurse-submodules
+
+      - name: Add stable release identifier file
+        if: ${{ inputs.stableBuild == true || inputs.stableBuild == 'true' }}
+        shell: bash
+        run: |
+          echo "#define DEFAULT_UPDATER_CHANNEL \"stable\"" > ./pcsx2-qt/DefaultUpdaterChannel.h
+          cat ./pcsx2-qt/DefaultUpdaterChannel.h
+
+      - name: Use Xcode 15.2
+        run: sudo xcode-select -s /Applications/Xcode_15.2.app
 
       - name: Prepare Artifact Metadata
         id: artifact-metadata
         shell: bash
         env:
-          OS: macos
-          GUI_FRAMEWORK: ${{ inputs.gui }}
-          ARCH: ${{ inputs.platform }}
-          SIMD: ''
+          PREFIX: ${{ inputs.artifactPrefixName }}
           EVENT_NAME: ${{ github.event_name }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_NUM: ${{ github.event.pull_request.number }}
@@ -54,38 +72,71 @@ jobs:
 
       - name: Install Packages
         env:
-          PLATFORM: ${{ inputs.platform }}
           HOMEBREW_NO_INSTALL_CLEANUP: 1
           HOMEBREW_NO_ANALYTICS: 1
         run: |
-          brew unlink libjpeg libpng # Conflicts with our self-built dependencies
-          # Unlike other packages, brew's MoltenVK build uses MoltenVK's minimum macOS version of 10.13 so we can use it
-          if ! brew install molten-vk; then
+          if ! brew install ccache nasm; then
             brew update
-            brew install molten-vk
+            brew install ccache nasm
           fi
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/deps
-          key: ${{ inputs.os }} ${{ inputs.platform }} ${{ inputs.gui }} deps ${{ hashFiles('.github/workflows/scripts/macos/build-dependencies.sh') }}
+          key: ${{ inputs.os }} deps ${{ hashFiles('.github/workflows/scripts/macos/build-dependencies.sh', '.github/workflows/scripts/common/*.patch') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        env:
-          GUI: ${{ inputs.gui }}
-        run: .github/workflows/scripts/macos/build-dependencies.sh
+        run: |
+          .github/workflows/scripts/macos/build-dependencies.sh "$HOME/deps"
+
+      - name: Download patches
+        run: |
+          cd bin/resources
+          aria2c -Z "${{ inputs.patchesUrl }}/patches.zip"
+
+      # -- SETUP CCACHE - https://cristianadam.eu/20200113/speeding-up-c-plus-plus-github-actions-using-ccache/
+      - name: Prepare ccache timestamp
+        id: ccache_cache_timestamp
+        run: echo "timestamp=$(date -u "+%Y-%m-%d-%H;%M;%S")" >> $GITHUB_OUTPUT
+
+      - name: Cache ccache cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ${{ inputs.os }} ccache ${{ steps.ccache_cache_timestamp.outputs.timestamp }}
+          restore-keys: ${{ inputs.os }} ccache
 
       - name: Generate CMake Files
         run: |
-          QT_BUILD=$([ "${{ inputs.gui }}" == "Qt" ] && echo "ON" || echo "OFF")
-          cmake -DCMAKE_PREFIX_PATH="$HOME/deps" -DCMAKE_BUILD_TYPE=Release -DQT_BUILD="$QT_BUILD" -DUSE_OPENGL=OFF -DDISABLE_ADVANCE_SIMD=ON -DLTO_PCSX2_CORE=ON -DUSE_SYSTEM_LIBS=OFF -DUSE_SYSTEM_SDL2=ON -B build .
+          cmake -DCMAKE_PREFIX_PATH="$HOME/deps" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_OSX_ARCHITECTURES="x86_64" \
+                -DDISABLE_ADVANCE_SIMD=ON \
+                -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+                -DUSE_LINKED_FFMPEG=ON \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
+                -B build .
 
       - name: Build PCSX2
         working-directory: build
-        run: make -j$(getconf _NPROCESSORS_ONLN) # macOS doesn't use make install
+        run: |
+          ccache -p
+          ccache -s
+          ccache -z
+          make -j$(getconf _NPROCESSORS_ONLN) # macOS doesn't use make install
+          ccache -s
+          # Ensure there's no global constructors in multi-isa files
+          for dir in */CMakeFiles/GS-{avx,avx2}.dir; do
+            if find "$dir" -name "*.o" | xargs nm | grep _GLOBAL_; then
+              echo "::error::Multi-isa files must not have global constructors!"
+              exit 1
+            fi
+          done
 
       - name: Run Tests
         working-directory: build
@@ -93,7 +144,6 @@ jobs:
 
       - name: Prepare Build Artifacts
         run: |
-          cp /usr/local/lib/libMoltenVK.dylib build/pcsx2*/PCSX2.app/Contents/Frameworks/
           TAG="$(git tag --points-at HEAD)"
           if [ -z "$TAG" ]; then
             APPNAME="${{ steps.artifact-metadata.outputs.artifact-name }}"
@@ -101,12 +151,12 @@ jobs:
             APPNAME="PCSX2-$TAG"
           fi
           mv build/pcsx2*/PCSX2.app "$APPNAME.app"
-          tar cvzf "${{ steps.artifact-metadata.outputs.artifact-name }}.tar.gz" "$APPNAME.app"
+          tar --options xz:compression-level=9 -cvJf "${{ steps.artifact-metadata.outputs.artifact-name }}.tar.xz" "$APPNAME.app"
           mkdir ci-artifacts
-          cp "${{ steps.artifact-metadata.outputs.artifact-name }}.tar.gz" ci-artifacts/macOS-${{ inputs.gui }}.tar.gz
+          cp "${{ steps.artifact-metadata.outputs.artifact-name }}.tar.xz" ci-artifacts/macOS.tar.xz
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact-metadata.outputs.artifact-name }}
-          path: "*.tar.gz"
+          path: "*.tar.xz"

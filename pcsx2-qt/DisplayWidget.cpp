@@ -1,29 +1,16 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
-
-#include "common/Assertions.h"
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #include "DisplayWidget.h"
-#include "EmuThread.h"
 #include "MainWindow.h"
 #include "QtHost.h"
 #include "QtUtils.h"
 
-#include "pcsx2/GS/GSIntrin.h" // _BitScanForward
+#include "pcsx2/ImGui/FullscreenUI.h"
+#include "pcsx2/ImGui/ImGuiManager.h"
+
+#include "common/Assertions.h"
+#include "common/Console.h"
 
 #include <QtCore/QDebug>
 #include <QtGui/QGuiApplication>
@@ -32,6 +19,8 @@
 #include <QtGui/QScreen>
 #include <QtGui/QWindow>
 #include <QtGui/QWindowStateChangeEvent>
+
+#include <bit>
 #include <cmath>
 
 #if defined(_WIN32)
@@ -61,75 +50,37 @@ DisplayWidget::~DisplayWidget()
 #endif
 }
 
-qreal DisplayWidget::devicePixelRatioFromScreen() const
-{
-	const QScreen* screen_for_ratio = screen();
-	if (!screen_for_ratio)
-		screen_for_ratio = QGuiApplication::primaryScreen();
-
-	return screen_for_ratio ? screen_for_ratio->devicePixelRatio() : static_cast<qreal>(1);
-}
-
 int DisplayWidget::scaledWindowWidth() const
 {
-	return std::max(static_cast<int>(std::ceil(static_cast<qreal>(width()) * devicePixelRatioFromScreen())), 1);
+	return std::max(static_cast<int>(std::ceil(static_cast<qreal>(width()) * QtUtils::GetDevicePixelRatioForWidget(this))), 1);
 }
 
 int DisplayWidget::scaledWindowHeight() const
 {
-	return std::max(static_cast<int>(std::ceil(static_cast<qreal>(height()) * devicePixelRatioFromScreen())), 1);
+	return std::max(static_cast<int>(std::ceil(static_cast<qreal>(height()) * QtUtils::GetDevicePixelRatioForWidget(this))), 1);
 }
 
 std::optional<WindowInfo> DisplayWidget::getWindowInfo()
 {
-	WindowInfo wi;
-
-	// Windows and Apple are easy here since there's no display connection.
-#if defined(_WIN32)
-	wi.type = WindowInfo::Type::Win32;
-	wi.window_handle = reinterpret_cast<void*>(winId());
-#elif defined(__APPLE__)
-	wi.type = WindowInfo::Type::MacOS;
-	wi.window_handle = reinterpret_cast<void*>(winId());
-#else
-	QPlatformNativeInterface* pni = QGuiApplication::platformNativeInterface();
-	const QString platform_name = QGuiApplication::platformName();
-	if (platform_name == QStringLiteral("xcb"))
+	std::optional<WindowInfo> ret(QtUtils::GetWindowInfoForWidget(this));
+	if (ret.has_value())
 	{
-		wi.type = WindowInfo::Type::X11;
-		wi.display_connection = pni->nativeResourceForWindow("display", windowHandle());
-		wi.window_handle = reinterpret_cast<void*>(winId());
+		m_last_window_width = ret->surface_width;
+		m_last_window_height = ret->surface_height;
+		m_last_window_scale = ret->surface_scale;
 	}
-	else if (platform_name == QStringLiteral("wayland"))
-	{
-		wi.type = WindowInfo::Type::Wayland;
-		wi.display_connection = pni->nativeResourceForWindow("display", windowHandle());
-		wi.window_handle = pni->nativeResourceForWindow("surface", windowHandle());
-	}
-	else
-	{
-		qCritical() << "Unknown PNI platform " << platform_name;
-		return std::nullopt;
-	}
-#endif
-
-	m_last_window_width = wi.surface_width = static_cast<u32>(scaledWindowWidth());
-	m_last_window_height = wi.surface_height = static_cast<u32>(scaledWindowHeight());
-	m_last_window_scale = wi.surface_scale = static_cast<float>(devicePixelRatioFromScreen());
-	return wi;
+	return ret;
 }
 
-void DisplayWidget::updateRelativeMode(bool master_enable)
+void DisplayWidget::updateRelativeMode(bool enabled)
 {
-	bool relative_mode = master_enable && InputManager::HasPointerAxisBinds();
-
 #ifdef _WIN32
 	// prefer ClipCursor() over warping movement when we're using raw input
-	bool clip_cursor = relative_mode && false /*InputManager::IsUsingRawInput()*/;
-	if (m_relative_mouse_enabled == relative_mode && m_clip_mouse_enabled == clip_cursor)
+	bool clip_cursor = enabled && false /*InputManager::IsUsingRawInput()*/;
+	if (m_relative_mouse_enabled == enabled && m_clip_mouse_enabled == clip_cursor)
 		return;
 
-	DevCon.WriteLn("updateRelativeMode(): relative=%s, clip=%s", relative_mode ? "yes" : "no", clip_cursor ? "yes" : "no");
+	DevCon.WriteLn("updateRelativeMode(): relative=%s, clip=%s", enabled ? "yes" : "no", clip_cursor ? "yes" : "no");
 
 	if (!clip_cursor && m_clip_mouse_enabled)
 	{
@@ -137,13 +88,13 @@ void DisplayWidget::updateRelativeMode(bool master_enable)
 		ClipCursor(nullptr);
 	}
 #else
-	if (m_relative_mouse_enabled == relative_mode)
+	if (m_relative_mouse_enabled == enabled)
 		return;
 
-	DevCon.WriteLn("updateRelativeMode(): relative=%s", relative_mode ? "yes" : "no");
+	DevCon.WriteLn("updateRelativeMode(): relative=%s", enabled ? "yes" : "no");
 #endif
 
-	if (relative_mode)
+	if (enabled)
 	{
 #ifdef _WIN32
 		m_relative_mouse_enabled = !clip_cursor;
@@ -161,24 +112,65 @@ void DisplayWidget::updateRelativeMode(bool master_enable)
 		QCursor::setPos(m_relative_mouse_start_pos);
 		releaseMouse();
 	}
-
 }
 
-void DisplayWidget::updateCursor(bool master_enable)
+void DisplayWidget::updateCursor(bool hidden)
 {
-#ifdef _WIN32
-	const bool hide = master_enable && (m_should_hide_cursor || m_relative_mouse_enabled || m_clip_mouse_enabled);
-#else
-	const bool hide = master_enable && (m_should_hide_cursor || m_relative_mouse_enabled);
-#endif
-	if (m_cursor_hidden == hide)
+	if (m_cursor_hidden == hidden)
 		return;
 
-	m_cursor_hidden = hide;
-	if (hide)
+	m_cursor_hidden = hidden;
+	if (hidden)
+	{
+		DevCon.WriteLn("updateCursor(): Cursor is now hidden");
 		setCursor(Qt::BlankCursor);
+	}
 	else
+	{
+		DevCon.WriteLn("updateCursor(): Cursor is now shown");
 		unsetCursor();
+	}
+}
+
+void DisplayWidget::handleCloseEvent(QCloseEvent* event)
+{
+	// Closing the separate widget will either cancel the close, or trigger shutdown.
+	// In the latter case, it's going to destroy us, so don't let Qt do it first.
+	// Treat a close event while fullscreen as an exit, that way ALT+F4 closes PCSX2,
+	// rather than just the game.
+	if (QtHost::IsVMValid() && !isActuallyFullscreen())
+	{
+		QMetaObject::invokeMethod(g_main_window, "requestShutdown", Q_ARG(bool, true),
+			Q_ARG(bool, true), Q_ARG(bool, false));
+	}
+	else
+	{
+		QMetaObject::invokeMethod(g_main_window, "requestExit", Q_ARG(bool, true));
+	}
+
+	// Cancel the event from closing the window.
+	event->ignore();
+}
+
+void DisplayWidget::destroy()
+{
+	m_destroying = true;
+
+#ifdef __APPLE__
+	// See Qt documentation, entire application is in full screen state, and the main
+	// window will get reopened fullscreen instead of windowed if we don't close the
+	// fullscreen window first.
+	if (isActuallyFullscreen())
+		close();
+#endif
+	deleteLater();
+}
+
+bool DisplayWidget::isActuallyFullscreen() const
+{
+	// I hate you QtWayland... have to check the parent, not ourselves.
+	QWidget* container = qobject_cast<QWidget*>(parent());
+	return container ? container->isFullScreen() : isFullScreen();
 }
 
 void DisplayWidget::updateCenterPos()
@@ -224,6 +216,18 @@ bool DisplayWidget::event(QEvent* event)
 		case QEvent::KeyRelease:
 		{
 			const QKeyEvent* key_event = static_cast<QKeyEvent*>(event);
+
+			// Forward text input to imgui.
+			if (ImGuiManager::WantsTextInput() && key_event->type() == QEvent::KeyPress)
+			{
+				// Don't forward backspace characters. We send the backspace as a normal key event,
+				// so if we send the character too, it double-deletes.
+				QString text(key_event->text());
+				text.remove(QChar('\b'));
+				if (!text.isEmpty())
+					ImGuiManager::AddTextInput(text.toStdString());
+			}
+
 			if (key_event->isAutoRepeat())
 				return true;
 
@@ -264,7 +268,7 @@ bool DisplayWidget::event(QEvent* event)
 
 			if (!m_relative_mouse_enabled)
 			{
-				const qreal dpr = devicePixelRatioFromScreen();
+				const qreal dpr = QtUtils::GetDevicePixelRatioForWidget(this);
 				const QPoint mouse_pos = mouse_event->pos();
 
 				const float scaled_x = static_cast<float>(static_cast<qreal>(mouse_pos.x()) * dpr);
@@ -308,18 +312,21 @@ bool DisplayWidget::event(QEvent* event)
 		case QEvent::MouseButtonDblClick:
 		case QEvent::MouseButtonRelease:
 		{
-			unsigned long button_index;
-			if (_BitScanForward(&button_index, static_cast<u32>(static_cast<const QMouseEvent*>(event)->button())))
+			if (const u32 button_mask = static_cast<u32>(static_cast<const QMouseEvent*>(event)->button()))
 			{
-				Host::RunOnCPUThread([button_index, pressed = (event->type() != QEvent::MouseButtonRelease)]() {
-					InputManager::InvokeEvents(InputManager::MakePointerButtonKey(0, button_index), static_cast<float>(pressed));
+				Host::RunOnCPUThread([button_index = std::countr_zero(button_mask),
+										 pressed = (event->type() != QEvent::MouseButtonRelease)]() {
+					InputManager::InvokeEvents(
+						InputManager::MakePointerButtonKey(0, button_index), static_cast<float>(pressed));
 				});
 			}
 
 			// don't toggle fullscreen when we're bound.. that wouldn't end well.
 			if (event->type() == QEvent::MouseButtonDblClick &&
 				static_cast<const QMouseEvent*>(event)->button() == Qt::LeftButton &&
-				!InputManager::HasAnyBindingsForKey(InputManager::MakePointerButtonKey(0, 0)) &&
+				QtHost::IsVMValid() && !FullscreenUI::HasActiveWindow() &&
+				((!QtHost::IsVMPaused() && !InputManager::HasAnyBindingsForKey(InputManager::MakePointerButtonKey(0, 0))) ||
+					(QtHost::IsVMPaused() && !ImGuiManager::WantsMouseInput())) &&
 				Host::GetBoolSettingValue("UI", "DoubleClickTogglesFullscreen", true))
 			{
 				g_emu_thread->toggleFullscreen();
@@ -330,15 +337,12 @@ bool DisplayWidget::event(QEvent* event)
 
 		case QEvent::Wheel:
 		{
-			// wheel delta is 120 as in winapi
 			const QPoint delta_angle(static_cast<QWheelEvent*>(event)->angleDelta());
-			constexpr float DELTA = 120.0f;
-
-			const float dx = std::clamp(static_cast<float>(delta_angle.x()) / DELTA, -1.0f, 1.0f);
+			const float dx = std::clamp(static_cast<float>(delta_angle.x()) / QtUtils::MOUSE_WHEEL_DELTA, -1.0f, 1.0f);
 			if (dx != 0.0f)
 				InputManager::UpdatePointerRelativeDelta(0, InputPointerAxis::WheelX, dx);
 
-			const float dy = std::clamp(static_cast<float>(delta_angle.y()) / DELTA, -1.0f, 1.0f);
+			const float dy = std::clamp(static_cast<float>(delta_angle.y()) / QtUtils::MOUSE_WHEEL_DELTA, -1.0f, 1.0f);
 			if (dy != 0.0f)
 				InputManager::UpdatePointerRelativeDelta(0, InputPointerAxis::WheelY, dy);
 
@@ -351,7 +355,7 @@ bool DisplayWidget::event(QEvent* event)
 		{
 			QWidget::event(event);
 
-			const float dpr = devicePixelRatioFromScreen();
+			const float dpr = QtUtils::GetDevicePixelRatioForWidget(this);
 			const u32 scaled_width = static_cast<u32>(std::max(static_cast<int>(std::ceil(static_cast<qreal>(width()) * dpr)), 1));
 			const u32 scaled_height = static_cast<u32>(std::max(static_cast<int>(std::ceil(static_cast<qreal>(height()) * dpr)), 1));
 
@@ -376,14 +380,10 @@ bool DisplayWidget::event(QEvent* event)
 
 		case QEvent::Close:
 		{
-			if (!g_main_window->requestShutdown())
-			{
-				// abort the window close
-				event->ignore();
-				return true;
-			}
+			if (m_destroying)
+				return QWidget::event(event);
 
-			QWidget::event(event);
+			handleCloseEvent(static_cast<QCloseEvent*>(event));
 			return true;
 		}
 
@@ -393,22 +393,6 @@ bool DisplayWidget::event(QEvent* event)
 
 			if (static_cast<QWindowStateChangeEvent*>(event)->oldState() & Qt::WindowMinimized)
 				emit windowRestoredEvent();
-
-			return true;
-		}
-
-		case QEvent::FocusIn:
-		{
-			QWidget::event(event);
-			emit windowFocusEvent();
-			return true;
-		}
-
-		case QEvent::ActivationChange:
-		{
-			QWidget::event(event);
-			if (isActiveWindow())
-				emit windowFocusEvent();
 
 			return true;
 		}
@@ -425,15 +409,24 @@ DisplayContainer::DisplayContainer()
 
 DisplayContainer::~DisplayContainer() = default;
 
-bool DisplayContainer::IsNeeded(bool fullscreen, bool render_to_main)
+bool DisplayContainer::isNeeded(bool fullscreen, bool render_to_main)
 {
 #if defined(_WIN32) || defined(__APPLE__)
 	return false;
 #else
-	if (!fullscreen && render_to_main)
+	if (!isRunningOnWayland())
 		return false;
 
 	// We only need this on Wayland because of client-side decorations...
+	return (fullscreen || !render_to_main);
+#endif
+}
+
+bool DisplayContainer::isRunningOnWayland()
+{
+#if defined(_WIN32) || defined(__APPLE__)
+	return false;
+#else
 	const QString platform_name = QGuiApplication::platformName();
 	return (platform_name == QStringLiteral("wayland"));
 #endif
@@ -457,10 +450,9 @@ DisplayWidget* DisplayContainer::removeDisplayWidget()
 
 bool DisplayContainer::event(QEvent* event)
 {
-	if (event->type() == QEvent::Close && !g_main_window->requestShutdown())
+	if (event->type() == QEvent::Close && m_display_widget)
 	{
-		// abort the window close
-		event->ignore();
+		m_display_widget->handleCloseEvent(static_cast<QCloseEvent*>(event));
 		return true;
 	}
 
@@ -474,19 +466,6 @@ bool DisplayContainer::event(QEvent* event)
 		{
 			if (static_cast<QWindowStateChangeEvent*>(event)->oldState() & Qt::WindowMinimized)
 				emit m_display_widget->windowRestoredEvent();
-		}
-		break;
-
-		case QEvent::FocusIn:
-		{
-			emit m_display_widget->windowFocusEvent();
-		}
-		break;
-
-		case QEvent::ActivationChange:
-		{
-			if (isActiveWindow())
-				emit m_display_widget->windowFocusEvent();
 		}
 		break;
 

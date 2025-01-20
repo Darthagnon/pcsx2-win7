@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 /*
  * ix86 definitions v0.9.1
@@ -622,4 +610,25 @@ namespace x86Emitter
 	extern const SimdImpl_Pack xPACK;
 	extern const xImplSimd_PInsert xPINSR;
 	extern const SimdImpl_PExtract xPEXTR;
+
+	// ------------------------------------------------------------------------
+
+	extern const xImplAVX_Move xVMOVAPS;
+	extern const xImplAVX_Move xVMOVUPS;
+	extern const xImplAVX_ArithFloat xVADD;
+	extern const xImplAVX_ArithFloat xVSUB;
+	extern const xImplAVX_ArithFloat xVMUL;
+	extern const xImplAVX_ArithFloat xVDIV;
+	extern const xImplAVX_CmpFloat xVCMP;
+	extern const xImplAVX_ThreeArgYMM xVPAND;
+	extern const xImplAVX_ThreeArgYMM xVPANDN;
+	extern const xImplAVX_ThreeArgYMM xVPOR;
+	extern const xImplAVX_ThreeArgYMM xVPXOR;
+	extern const xImplAVX_CmpInt xVPCMP;
+
+	extern void xVPMOVMSKB(const xRegister32& to, const xRegisterSSE& from);
+	extern void xVMOVMSKPS(const xRegister32& to, const xRegisterSSE& from);
+	extern void xVMOVMSKPD(const xRegister32& to, const xRegisterSSE& from);
+	extern void xVZEROUPPER();
+
 } // namespace x86Emitter

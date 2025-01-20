@@ -1,27 +1,17 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "GSSetupPrimCodeGenerator.all.h"
 #include "GSVertexSW.h"
+#include "common/Perf.h"
 
+#include <cstddef>
+
+MULTI_ISA_UNSHARED_IMPL;
 using namespace Xbyak;
 
-#define _rip_local(field) ((m_rip) ? ptr[rip + (char*)&m_local.field] : ptr[_m_local + OFFSETOF(GSScanlineLocalData, field)])
-
-#define _64_m_local _64_t0
+#define _rip_local(field) (ptr[_m_local + offsetof(GSScanlineLocalData, field)])
+#define _rip_local_di(i, field) (ptr[_m_local + offsetof(GSScanlineLocalData, d[0].field) + (sizeof(GSScanlineLocalData::skip) * (i))])
 
 /// On AVX, does a v-prefixed separate destination operation
 /// On SSE, moves src1 into dst using movdqa, then does the operation
@@ -47,23 +37,21 @@ using namespace Xbyak;
 	#define _rip_local_d_p(x) _rip_local_d(x)
 #endif
 
-GSSetupPrimCodeGenerator2::GSSetupPrimCodeGenerator2(Xbyak::CodeGenerator* base, CPUInfo cpu, void* param, u64 key)
-	: _parent(base, cpu)
-	, m_local(*(GSScanlineLocalData*)param)
-	, m_rip(false), many_regs(false)
+GSSetupPrimCodeGenerator::GSSetupPrimCodeGenerator(u64 key, void* code, size_t maxsize)
+	: GSNewCodeGenerator(code, maxsize)
+	, many_regs(false)
 	// On x86 arg registers are very temporary but on x64 they aren't, so on x86 some registers overlap
 #ifdef _WIN32
 	, _64_vertex(rcx)
 	, _index(rdx)
 	, _dscan(r8)
-	, _64_t0(r9), t1(r10)
+	, _m_local(r9), t1(r10)
 #else
 	, _64_vertex(rdi)
 	, _index(rsi)
 	, _dscan(rdx)
-	, _64_t0(rcx), t1(r8)
+	, _m_local(rcx), t1(r8)
 #endif
-	, _m_local(chooseLocal(&m_local, _64_m_local))
 {
 	m_sel.key = key;
 
@@ -73,7 +61,7 @@ GSSetupPrimCodeGenerator2::GSSetupPrimCodeGenerator2(Xbyak::CodeGenerator* base,
 	m_en.c = m_sel.fb && !(m_sel.tfx == TFX_DECAL && m_sel.tcc) ? 1 : 0;
 }
 
-void GSSetupPrimCodeGenerator2::broadcastf128(const XYm& reg, const Address& mem)
+void GSSetupPrimCodeGenerator::broadcastf128(const XYm& reg, const Address& mem)
 {
 #if SETUP_PRIM_USING_YMM
 	vbroadcastf128(reg, mem);
@@ -82,7 +70,7 @@ void GSSetupPrimCodeGenerator2::broadcastf128(const XYm& reg, const Address& mem
 #endif
 }
 
-void GSSetupPrimCodeGenerator2::broadcastss(const XYm& reg, const Address& mem)
+void GSSetupPrimCodeGenerator::broadcastss(const XYm& reg, const Address& mem)
 {
 	if (hasAVX)
 	{
@@ -95,12 +83,9 @@ void GSSetupPrimCodeGenerator2::broadcastss(const XYm& reg, const Address& mem)
 	}
 }
 
-void GSSetupPrimCodeGenerator2::Generate()
+void GSSetupPrimCodeGenerator::Generate()
 {
-	// Technically we just need the delta < 2GB
-	m_rip = (size_t)&m_local < 0x80000000 && (size_t)getCurr() < 0x80000000;
-
-	bool needs_shift = (m_en.z || m_en.f) && m_sel.prim != GS_SPRITE_CLASS || m_en.t || m_en.c && m_sel.iip;
+	bool needs_shift = ((m_en.z || m_en.f) && m_sel.prim != GS_SPRITE_CLASS) || m_en.t || (m_en.c && m_sel.iip);
 	many_regs = isYmm && !m_sel.notest && needs_shift;
 
 #ifdef _WIN64
@@ -115,16 +100,13 @@ void GSSetupPrimCodeGenerator2::Generate()
 	}
 #endif
 
-	if (!m_rip)
-		mov(_64_m_local, (size_t)&m_local);
-
 	if (needs_shift)
 	{
 
 		if (isXmm)
-			mov(rax, (size_t)g_const->m_shift_128b);
+			mov(rax, (size_t)g_const.m_shift_128b);
 		else
-			mov(rax, (size_t)g_const->m_shift_256b);
+			mov(rax, (size_t)g_const.m_shift_256b);
 
 		for (int i = 0; i < (m_sel.notest ? 2 : many_regs ? 9 : 5); i++)
 		{
@@ -154,9 +136,11 @@ void GSSetupPrimCodeGenerator2::Generate()
 	if (isYmm)
 		vzeroupper();
 	ret();
+
+	Perf::any.RegisterKey(actual.getCode(), actual.getSize(), "GSSetupPrim_", m_sel.key);
 }
 
-void GSSetupPrimCodeGenerator2::Depth_XMM()
+void GSSetupPrimCodeGenerator::Depth_XMM()
 {
 	if (!m_en.z && !m_en.f)
 	{
@@ -186,7 +170,7 @@ void GSSetupPrimCodeGenerator2::Depth_XMM()
 				cvttps2dq(xmm2, xmm2);
 				pshuflw(xmm2, xmm2, _MM_SHUFFLE(2, 2, 0, 0));
 				pshufhw(xmm2, xmm2, _MM_SHUFFLE(2, 2, 0, 0));
-				movdqa(_rip_local(d[i].f), xmm2);
+				movdqa(_rip_local_di(i, f), xmm2);
 			}
 		}
 
@@ -209,7 +193,7 @@ void GSSetupPrimCodeGenerator2::Depth_XMM()
 				// m_local.d[i].z1 = dz.mul64(VectorF::f32to64(half_shift[2 * i + 3]));
 
 				THREEARG(mulps, xmm1, xmm0, XYm(4 + i));
-				movdqa(_rip_local(d[i].z), xmm1);
+				movdqa(_rip_local_di(i, z), xmm1);
 			}
 		}
 	}
@@ -217,7 +201,7 @@ void GSSetupPrimCodeGenerator2::Depth_XMM()
 	{
 		// GSVector4 p = vertex[index[1]].p;
 
-		mov(eax, ptr[_index + sizeof(u32) * 1]);
+		movzx(eax, word[_index + sizeof(u16) * 1]);
 		shl(eax, 6); // * sizeof(GSVertexSW)
 		add(rax, _64_vertex);
 
@@ -243,7 +227,7 @@ void GSSetupPrimCodeGenerator2::Depth_XMM()
 	}
 }
 
-void GSSetupPrimCodeGenerator2::Depth_YMM()
+void GSSetupPrimCodeGenerator::Depth_YMM()
 {
 	if (!m_en.z && !m_en.f)
 	{
@@ -269,11 +253,11 @@ void GSSetupPrimCodeGenerator2::Depth_YMM()
 				if (i < 4 || many_regs)
 					vmulps(ymm0, Ymm(4 + i), ymm1);
 				else
-					vmulps(ymm0, ymm1, ptr[g_const->m_shift_256b[i + 1]]);
+					vmulps(ymm0, ymm1, ptr[g_const.m_shift_256b[i + 1]]);
 				cvttps2dq(ymm0, ymm0);
 				pshuflw(ymm0, ymm0, _MM_SHUFFLE(2, 2, 0, 0));
 				pshufhw(ymm0, ymm0, _MM_SHUFFLE(2, 2, 0, 0));
-				movdqa(_rip_local(d[i].f), ymm0);
+				movdqa(_rip_local_di(i, f), ymm0);
 			}
 		}
 
@@ -297,8 +281,8 @@ void GSSetupPrimCodeGenerator2::Depth_YMM()
 				if (i < 4 || many_regs)
 					vmulps(ymm1, Ymm(4 + i), ymm0);
 				else
-					vmulps(ymm1, ymm0, ptr[g_const->m_shift_256b[i + 1]]);
-				movaps(_rip_local(d[i].z), ymm1);
+					vmulps(ymm1, ymm0, ptr[g_const.m_shift_256b[i + 1]]);
+				movaps(_rip_local_di(i, z), ymm1);
 			}
 		}
 	}
@@ -306,7 +290,7 @@ void GSSetupPrimCodeGenerator2::Depth_YMM()
 	{
 		// GSVector4 p = vertex[index[1]].p;
 
-		mov(eax, ptr[_index + sizeof(u32) * 1]);
+		movzx(eax, word[_index + sizeof(u16) * 1]);
 		shl(eax, 6); // * sizeof(GSVertexSW)
 		add(rax, _64_vertex);
 
@@ -329,7 +313,7 @@ void GSSetupPrimCodeGenerator2::Depth_YMM()
 	}
 }
 
-void GSSetupPrimCodeGenerator2::Texture()
+void GSSetupPrimCodeGenerator::Texture()
 {
 	if (!m_en.t)
 	{
@@ -372,7 +356,7 @@ void GSSetupPrimCodeGenerator2::Texture()
 			if (i < 4 || many_regs)
 				THREEARG(mulps, xym2, XYm(4 + i), xym1);
 			else
-				vmulps(ymm2, ymm1, ptr[g_const->m_shift_256b[i + 1]]);
+				vmulps(ymm2, ymm1, ptr[g_const.m_shift_256b[i + 1]]);
 
 			if (m_sel.fst)
 			{
@@ -382,8 +366,8 @@ void GSSetupPrimCodeGenerator2::Texture()
 
 				switch (j)
 				{
-					case 0: movdqa(_rip_local(d[i].s), xym2); break;
-					case 1: movdqa(_rip_local(d[i].t), xym2); break;
+					case 0: movdqa(_rip_local_di(i, s), xym2); break;
+					case 1: movdqa(_rip_local_di(i, t), xym2); break;
 				}
 			}
 			else
@@ -392,16 +376,16 @@ void GSSetupPrimCodeGenerator2::Texture()
 
 				switch (j)
 				{
-					case 0: movaps(_rip_local(d[i].s), xym2); break;
-					case 1: movaps(_rip_local(d[i].t), xym2); break;
-					case 2: movaps(_rip_local(d[i].q), xym2); break;
+					case 0: movaps(_rip_local_di(i, s), xym2); break;
+					case 1: movaps(_rip_local_di(i, t), xym2); break;
+					case 2: movaps(_rip_local_di(i, q), xym2); break;
 				}
 			}
 		}
 	}
 }
 
-void GSSetupPrimCodeGenerator2::Color()
+void GSSetupPrimCodeGenerator::Color()
 {
 	if (!m_en.c)
 	{
@@ -440,7 +424,7 @@ void GSSetupPrimCodeGenerator2::Color()
 			if (i < 4 || many_regs)
 				THREEARG(mulps, xym0, XYm(4 + i), xym2);
 			else
-				vmulps(ymm0, ymm2, ptr[g_const->m_shift_256b[i + 1]]);
+				vmulps(ymm0, ymm2, ptr[g_const.m_shift_256b[i + 1]]);
 			cvttps2dq(xym0, xym0);
 			packssdw(xym0, xym0);
 
@@ -449,14 +433,14 @@ void GSSetupPrimCodeGenerator2::Color()
 			if (i < 4 || many_regs)
 				THREEARG(mulps, xym1, XYm(4 + i), xym3);
 			else
-				vmulps(ymm1, ymm3, ptr[g_const->m_shift_256b[i + 1]]);
+				vmulps(ymm1, ymm3, ptr[g_const.m_shift_256b[i + 1]]);
 			cvttps2dq(xym1, xym1);
 			packssdw(xym1, xym1);
 
 			// m_local.d[i].rb = r.upl16(b);
 
 			punpcklwd(xym0, xym1);
-			movdqa(_rip_local(d[i].rb), xym0);
+			movdqa(_rip_local_di(i, rb), xym0);
 		}
 
 		// GSVector4 c = dscan.c;
@@ -476,7 +460,7 @@ void GSSetupPrimCodeGenerator2::Color()
 			if (i < 4 || many_regs)
 				THREEARG(mulps, xym0, XYm(4 + i), xym2);
 			else
-				vmulps(ymm0, ymm2, ptr[g_const->m_shift_256b[i + 1]]);
+				vmulps(ymm0, ymm2, ptr[g_const.m_shift_256b[i + 1]]);
 			cvttps2dq(xym0, xym0);
 			packssdw(xym0, xym0);
 
@@ -485,14 +469,14 @@ void GSSetupPrimCodeGenerator2::Color()
 			if (i < 4 || many_regs)
 				THREEARG(mulps, xym1, XYm(4 + i), xym3);
 			else
-				vmulps(ymm1, ymm3, ptr[g_const->m_shift_256b[i + 1]]);
+				vmulps(ymm1, ymm3, ptr[g_const.m_shift_256b[i + 1]]);
 			cvttps2dq(xym1, xym1);
 			packssdw(xym1, xym1);
 
 			// m_local.d[i].ga = g.upl16(a);
 
 			punpcklwd(xym0, xym1);
-			movdqa(_rip_local(d[i].ga), xym0);
+			movdqa(_rip_local_di(i, ga), xym0);
 		}
 	}
 	else
@@ -511,7 +495,7 @@ void GSSetupPrimCodeGenerator2::Color()
 
 		if (!(m_sel.prim == GS_SPRITE_CLASS && (m_en.z || m_en.f))) // if this is a sprite, the last vertex was already loaded in Depth()
 		{
-			mov(eax, ptr[_index + sizeof(u32) * last]);
+			movzx(eax, word[_index + sizeof(u16) * last]);
 			shl(eax, 6); // * sizeof(GSVertexSW)
 			add(rax, _64_vertex);
 		}

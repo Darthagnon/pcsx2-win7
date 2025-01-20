@@ -1,13 +1,17 @@
 # Setting it to a range tells it that it supports the features on the newer
 # versions as well, avoiding setting policies.
-cmake_minimum_required(VERSION 3.11...3.22)
+cmake_minimum_required(VERSION 3.16...3.25)
+
+# Enabling this cmake policy gets rid of warnings regarding LTO.
+cmake_policy(SET CMP0069 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 
 if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
 	message(FATAL_ERROR "PCSX2 does not support in-tree builds.  Please make a build directory that is not the PCSX2 source directory and generate your CMake project there using either `cmake -B build_directory` or by running cmake from the build directory.")
 endif()
 
 # Project Name
-project(Pcsx2)
+project(Pcsx2 C CXX)
 
 # Variable to check that people use the good file
 set(TOP_CMAKE_WAS_SOURCED TRUE)
@@ -15,18 +19,22 @@ set(TOP_CMAKE_WAS_SOURCED TRUE)
 # set module path
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
+# Write binaries to the bin directory under the build directory.
+# This makes it simple to run development builds directly out of the build directory.
+if (UNIX AND NOT APPLE)
+	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+	set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+endif()
+
 # include some generic functions to ensure correctness of the env
 include(Pcsx2Utils)
 
 check_no_parenthesis_in_path()
-detectOperatingSystem()
-check_compiler_version("7.0" "7.0")
+detect_operating_system()
+detect_compiler()
 
 #-------------------------------------------------------------------------------
 # Include specific module
-# GNUInstallDirs must be done before BuildParameters
-include(GNUInstallDirs)
-# BuildParameters Must be done before SearchForStuff
 include(BuildParameters)
 include(SearchForStuff)
 
@@ -39,47 +47,49 @@ add_subdirectory(common)
 
 # make pcsx2
 add_subdirectory(pcsx2)
+add_subdirectory(pcsx2-qt)
 
-if (QT_BUILD)
-	add_subdirectory(pcsx2-qt)
-
-	# Updater is Windows only for now.
-	if (WIN32)
-		add_subdirectory(updater)
-	endif()
+# Updater is Windows only for now.
+if (WIN32)
+	add_subdirectory(updater)
 endif()
 
 # tests
-if(ACTUALLY_ENABLE_TESTS)
-	set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-	add_subdirectory(3rdparty/gtest EXCLUDE_FROM_ALL)
+if(ENABLE_TESTS)
+	add_subdirectory(3rdparty/googletest)
 	add_subdirectory(tests/ctest)
 endif()
 
+# gsrunner
+if(ENABLE_GSRUNNER)
+	if (NOT WIN32)
+		message(WARNING "GSRunner is only supported on Windows and may not build on your system")
+	endif()
+	add_subdirectory(pcsx2-gsrunner)
+endif()
+
 #-------------------------------------------------------------------------------
+if(NOT IS_SUPPORTED_COMPILER)
+	message(WARNING "
+*************** UNSUPPORTED CONFIGURATION ***************
+You are not compiling PCSX2 with a supported compiler.
+It may not even build successfully.
+PCSX2 only supports the Clang and MSVC compilers.
+No support will be provided, continue at your own risk.
+*********************************************************")
+endif()
 
-# Install some files to ease package creation
-if(PACKAGE_MODE)
-	# set categories depending on system/distribution in pcsx2.desktop
-	if(openSUSE)
-		set(PCSX2_MENU_CATEGORIES "System;Emulator;")
-	else()
-		set(PCSX2_MENU_CATEGORIES "Game;Emulator;")
-	endif()
-	configure_file("${CMAKE_SOURCE_DIR}/linux_various/PCSX2.desktop.in" "${CMAKE_BINARY_DIR}/linux_various/PCSX2.desktop" @ONLY)
+if(_M_ARM64)
+	message(WARNING "
+*************** UNSUPPORTED CONFIGURATION ***************
 
-	INSTALL(FILES "${CMAKE_BINARY_DIR}/linux_various/PCSX2.desktop" DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/applications")
-	INSTALL(FILES "${CMAKE_SOURCE_DIR}/linux_various/PCSX2.xpm"     DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/pixmaps")
-	INSTALL(FILES "${CMAKE_SOURCE_DIR}/bin/docs/PCSX2_FAQ.pdf"      DESTINATION "${CMAKE_INSTALL_DOCDIR}")
-	INSTALL(FILES "${CMAKE_SOURCE_DIR}/bin/docs/Configuration_Guide.pdf"   DESTINATION "${CMAKE_INSTALL_DOCDIR}")
-	INSTALL(FILES "${CMAKE_SOURCE_DIR}/bin/docs/PCSX2.1"            DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
-	if(NOT DISABLE_PCSX2_WRAPPER)
-		INSTALL(FILES "${CMAKE_SOURCE_DIR}/linux_various/PCSX2-linux.sh"          DESTINATION "${CMAKE_INSTALL_BINDIR}")
-	endif()
+Apple Silicon support in PCSX2 is INCOMPLETE. There are
+currently no EE/VU/IOP recompilers, and games will run
+VERY slow. There is no date for completion yet, you
+should set -DCMAKE_OSX_ARCHITECTURES=x86_64 for now,
+unless you want to work on the recompilers.
 
-else()
-	if(NOT DISABLE_PCSX2_WRAPPER)
-		# special case to avoid having linux files in windows
-		INSTALL(FILES "${CMAKE_SOURCE_DIR}/linux_various/PCSX2-linux.sh"          DESTINATION "${CMAKE_SOURCE_DIR}/bin")
-	endif()
+We also ask that you read https://dont-ship.it/.
+
+*********************************************************")
 endif()

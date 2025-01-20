@@ -1,31 +1,16 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 #include "microVU.h"
+#include <array>
 
-union regInfo
+struct regCycleInfo
 {
-	u32 reg;
-	struct
-	{
-		u8 x;
-		u8 y;
-		u8 z;
-		u8 w;
-	};
+	u8 x : 4;
+	u8 y : 4;
+	u8 z : 4;
+	u8 w : 4;
 };
 
 // microRegInfo is carefully ordered for faster compares.  The "important" information is
@@ -51,27 +36,29 @@ union alignas(16) microRegInfo
 				u8 blockType;      // 0 = Normal; 1,2 = Compile one instruction (E-bit/Branch Ending)
 				u8 r;
 			};
-			u32 quick32[4];
+			u64 quick64[1];
+			u32 quick32[2];
 		};
 
 		u32 xgkickcycles;
-		u8 mbitinblock;
+		u8 unused;
 		u8 vi15v; // 'vi15' constant is valid
 		u16 vi15; // Constant Prop Info for vi15
 
 		struct
 		{
 			u8 VI[16];
-			regInfo VF[32];
+			regCycleInfo VF[32];
 		};
 	};
 
-	u128 full128[176 / sizeof(u128)];
-	u64  full64[176 / sizeof(u64)];
-	u32  full32[176 / sizeof(u32)];
+	u128 full128[96 / sizeof(u128)];
+	u64  full64[96 / sizeof(u64)];
+	u32  full32[96 / sizeof(u32)];
 };
 
-static_assert(sizeof(microRegInfo) == 176, "microRegInfo was not 176 bytes");
+// Note: mVUcustomSearch needs to be updated if this is changed
+static_assert(sizeof(microRegInfo) == 96, "microRegInfo was not 96 bytes");
 
 struct microProgram;
 struct microJumpCache
@@ -91,14 +78,14 @@ struct alignas(16) microBlock
 
 struct microTempRegInfo
 {
-	regInfo VF[2]; // Holds cycle info for Fd, VF[0] = Upper Instruction, VF[1] = Lower Instruction
-	u8 VFreg[2];   // Index of the VF reg
-	u8 VI;         // Holds cycle info for Id
-	u8 VIreg;      // Index of the VI reg
-	u8 q;          // Holds cycle info for Q reg
-	u8 p;          // Holds cycle info for P reg
-	u8 r;          // Holds cycle info for R reg (Will never cause stalls, but useful to know if R is modified)
-	u8 xgkick;     // Holds the cycle info for XGkick
+	regCycleInfo VF[2]; // Holds cycle info for Fd, VF[0] = Upper Instruction, VF[1] = Lower Instruction
+	u8 VFreg[2];        // Index of the VF reg
+	u8 VI;              // Holds cycle info for Id
+	u8 VIreg;           // Index of the VI reg
+	u8 q;               // Holds cycle info for Q reg
+	u8 p;               // Holds cycle info for P reg
+	u8 r;               // Holds cycle info for R reg (Will never cause stalls, but useful to know if R is modified)
+	u8 xgkick;          // Holds the cycle info for XGkick
 };
 
 struct microVFreg
@@ -214,6 +201,9 @@ struct microIR
 // Reg Alloc
 //------------------------------------------------------------------
 
+//#define MVURALOG(...) fprintf(stderr, __VA_ARGS__)
+#define MVURALOG(...)
+
 struct microMapXMM
 {
 	int  VFreg;    // VF Reg Number Stored (-1 = Temp; 0 = vf0 and will not be written back; 32 = ACC; 33 = I reg)
@@ -223,13 +213,34 @@ struct microMapXMM
 	bool isZero;   // Register was loaded from VF00 and doesn't need clamping
 };
 
+struct microMapGPR
+{
+	int VIreg;
+	int count;
+	bool isNeeded;
+	bool dirty;
+	bool isZeroExtended;
+	bool usable;
+};
+
 class microRegAlloc
 {
 protected:
-	static const int xmmTotal = 15; // PQ register is reserved
-	microMapXMM xmmMap[xmmTotal];
+	static const int xmmTotal = iREGCNT_XMM - 1; // PQ register is reserved
+	static const int gprTotal = iREGCNT_GPR;
+
+	std::array<microMapXMM, xmmTotal> xmmMap;
+	std::array<microMapGPR, gprTotal> gprMap;
+
 	int         counter; // Current allocation count
 	int         index;   // VU0 or VU1
+
+	// DO NOT REMOVE THIS.
+	// This is here for a reason. MSVC likes to turn global writes into a load+conditional move+store.
+	// That creates a race with the EE thread when we're compiling on the VU thread, even though
+	// regAllocCOP2 is false. By adding another level of indirection, it emits a branch instead.
+	_xmmregs*   pxmmregs;
+
 	bool        regAllocCOP2;    // Local COP2 check
 
 	// Helper functions to get VU regs
@@ -239,6 +250,18 @@ protected:
 
 	__ri void loadIreg(const xmm& reg, int xyzw)
 	{
+		for (int i = 0; i < gprTotal; i++)
+		{
+			if (gprMap[i].VIreg == REG_I)
+			{
+				xMOVDZX(reg, xRegister32(i));
+				if (!_XYZWss(xyzw))
+					xSHUF.PS(reg, reg, 0);
+
+				return;
+			}
+		}
+
 		xMOVSSZX(reg, ptr32[&getVI(REG_I)]);
 		if (!_XYZWss(xyzw))
 			xSHUF.PS(reg, reg, 0);
@@ -259,11 +282,11 @@ protected:
 		return -1;
 	}
 
-	int findFreeReg()
+	int findFreeReg(int vfreg)
 	{
 		if (regAllocCOP2)
 		{
-			return _freeXMMregsCOP2();
+			return _allocVFtoXMMreg(vfreg, 0);
 		}
 
 		for (int i = 0; i < xmmTotal; i++)
@@ -274,32 +297,191 @@ protected:
 			}
 		}
 		int x = findFreeRegRec(0);
-		pxAssertDev(x >= 0, "microVU register allocation failure!");
+		pxAssertMsg(x >= 0, "microVU register allocation failure!");
 		return x;
 	}
+
+	int findFreeGPRRec(int startIdx)
+	{
+		for (int i = startIdx; i < gprTotal; i++)
+		{
+			if (gprMap[i].usable && !gprMap[i].isNeeded)
+			{
+				int x = findFreeGPRRec(i + 1);
+				if (x == -1)
+					return i;
+				return ((gprMap[i].count < gprMap[x].count) ? i : x);
+			}
+		}
+		return -1;
+	}
+
+	int findFreeGPR(int vireg)
+	{
+		if (regAllocCOP2)
+			return _allocX86reg(X86TYPE_VIREG, vireg, MODE_COP2);
+
+		for (int i = 0; i < gprTotal; i++)
+		{
+			if (gprMap[i].usable && !gprMap[i].isNeeded && (gprMap[i].VIreg < 0))
+			{
+				return i; // Reg is not needed and was a temp reg
+			}
+		}
+		int x = findFreeGPRRec(0);
+		pxAssertMsg(x >= 0, "microVU register allocation failure!");
+		return x;
+	}
+
+	void writeVIBackup(const xRegisterInt& reg);
 
 public:
 	microRegAlloc(int _index)
 	{
 		index = _index;
+
+		// mark gpr registers as usable
+		gprMap.fill({0, 0, false, false, false, false});
+		for (int i = 0; i < gprTotal; i++)
+		{
+			if (i == gprT1.GetId() || i == gprT2.GetId() ||
+				i == gprF0.GetId() || i == gprF1.GetId() || i == gprF2.GetId() || i == gprF3.GetId() ||
+				i == rsp.GetId())
+			{
+				continue;
+			}
+
+			gprMap[i].usable = true;
+		}
+
 		reset(false);
 	}
 
 	// Fully resets the regalloc by clearing all cached data
 	void reset(bool cop2mode)
 	{
+		// we run this at the of cop2, so don't free fprs
+		regAllocCOP2 = false;
+
 		for (int i = 0; i < xmmTotal; i++)
-		{
 			clearReg(i);
-		}
+		for (int i = 0; i < gprTotal; i++)
+			clearGPR(i);
+
 		counter = 0;
 		regAllocCOP2 = cop2mode;
+		pxmmregs = cop2mode ? xmmregs : nullptr;
+
+		if (cop2mode)
+		{
+			for (int i = 0; i < xmmTotal; i++)
+			{
+				if (!pxmmregs[i].inuse || pxmmregs[i].type != XMMTYPE_VFREG)
+					continue;
+
+				// we shouldn't have any temp registers in here.. except for PQ, which
+				// isn't allocated here yet.
+				// pxAssertRel(fprregs[i].reg >= 0, "Valid full register preserved");
+				if (pxmmregs[i].reg >= 0)
+				{
+					MVURALOG("Preserving VF reg %d in host reg %d across instruction\n", pxmmregs[i].reg, i);
+					pxAssert(pxmmregs[i].reg >= 0);
+					pxmmregs[i].needed = false;
+					xmmMap[i].isNeeded = false;
+					xmmMap[i].VFreg = pxmmregs[i].reg;
+					xmmMap[i].xyzw = ((pxmmregs[i].mode & MODE_WRITE) != 0) ? 0xf : 0x0;
+				}
+			}
+
+			for (int i = 0; i < gprTotal; i++)
+			{
+				if (!x86regs[i].inuse || x86regs[i].type != X86TYPE_VIREG)
+					continue;
+
+				// pxAssertRel(armregs[i].reg >= 0, "Valid full register preserved");
+				if (x86regs[i].reg >= 0)
+				{
+					MVURALOG("Preserving VI reg %d in host reg %d across instruction\n", x86regs[i].reg, i);
+					x86regs[i].needed = false;
+					gprMap[i].isNeeded = false;
+					gprMap[i].isZeroExtended = false;
+					gprMap[i].VIreg = x86regs[i].reg;
+					gprMap[i].dirty = ((x86regs[i].mode & MODE_WRITE) != 0);
+				}
+			}
+		}
+
+		gprMap[RFASTMEMBASE.GetId()].usable = !cop2mode || !CHECK_FASTMEM;
 	}
 
 	int getXmmCount()
 	{
 		return xmmTotal + 1;
 	}
+
+	int getFreeXmmCount()
+	{
+		int count = 0;
+
+		for (int i = 0; i < xmmTotal; i++)
+		{
+			if (!xmmMap[i].isNeeded && (xmmMap[i].VFreg < 0))
+				count++;
+		}
+
+		return count;
+	}
+
+	bool hasRegVF(int vfreg)
+	{
+		for (int i = 0; i < xmmTotal; i++)
+		{
+			if (xmmMap[i].VFreg == vfreg)
+				return true;
+		}
+
+		return false;
+	}
+
+	int getRegVF(int i)
+	{
+		return (i < xmmTotal) ? xmmMap[i].VFreg : -1;
+	}
+
+	int getGPRCount()
+	{
+		return gprTotal;
+	}
+
+	int getFreeGPRCount()
+	{
+		int count = 0;
+
+		for (int i = 0; i < gprTotal; i++)
+		{
+			if (!gprMap[i].usable && (gprMap[i].VIreg < 0))
+				count++;
+		}
+
+		return count;
+	}
+
+	bool hasRegVI(int vireg)
+	{
+		for (int i = 0; i < gprTotal; i++)
+		{
+			if (gprMap[i].VIreg == vireg)
+				return true;
+		}
+
+		return false;
+	}
+
+	int getRegVI(int i)
+	{
+		return (i < gprTotal) ? gprMap[i].VIreg : -1;
+	}
+
 	// Flushes all allocated registers (i.e. writes-back to memory all modified registers).
 	// If clearState is 0, then it keeps cached reg data valid
 	// If clearState is 1, then it invalidates all cached reg data after write-back
@@ -311,10 +493,74 @@ public:
 			if (clearState)
 				clearReg(i);
 		}
+
+		for (int i = 0; i < gprTotal; i++)
+		{
+			writeBackReg(xRegister32(i), true);
+			if (clearState)
+				clearGPR(i);
+		}
 	}
 
-	void TDwritebackAll(bool clearState = false)
+	void flushCallerSavedRegisters(bool clearNeeded = false)
 	{
+		for (int i = 0; i < xmmTotal; i++)
+		{
+			if (!xRegisterSSE::IsCallerSaved(i))
+				continue;
+
+			writeBackReg(xmm(i));
+			if (clearNeeded || !xmmMap[i].isNeeded)
+				clearReg(i);
+		}
+
+		for (int i = 0; i < gprTotal; i++)
+		{
+			if (!xRegister32::IsCallerSaved(i))
+				continue;
+
+			writeBackReg(xRegister32(i), true);
+			if (clearNeeded || !gprMap[i].isNeeded)
+				clearGPR(i);
+		}
+	}
+
+	void flushPartialForCOP2()
+	{
+		for (int i = 0; i < xmmTotal; i++)
+		{
+			microMapXMM& clear = xmmMap[i];
+
+			// toss away anything which is not a full cached register
+			if (pxmmregs[i].inuse && pxmmregs[i].type == XMMTYPE_VFREG)
+			{
+				// Should've been done in clearNeeded()
+				if (clear.xyzw != 0 && clear.xyzw != 0xf)
+					writeBackReg(xRegisterSSE::GetInstance(i), false);
+
+				if (clear.VFreg <= 0)
+				{
+					// temps really shouldn't be here..
+					_freeXMMreg(i);
+				}
+			}
+
+			// needed gets cleared in iCore.
+			clear = {-1, 0, 0, false, false};
+		}
+
+		for (int i = 0; i < gprTotal; i++)
+		{
+			microMapGPR& clear = gprMap[i];
+			if (clear.VIreg < 0)
+				clearGPR(i);
+		}
+	}
+
+	void TDwritebackAll()
+	{
+		// NOTE: We don't clear state here, this happens in an optional branch
+
 		for (int i = 0; i < xmmTotal; i++)
 		{
 			microMapXMM& mapX = xmmMap[xmm(i).Id];
@@ -329,11 +575,14 @@ public:
 					mVUsaveReg(xmm(i), ptr[&getVF(mapX.VFreg)], mapX.xyzw, 1);
 			}
 		}
+
+		for (int i = 0; i < gprTotal; i++)
+			writeBackReg(xRegister32(i), false);
 	}
 
 	bool checkVFClamp(int regId)
 	{
-		if ((xmmMap[regId].VFreg == 33 && !EmuConfig.Gamefixes.IbitHack) || xmmMap[regId].isZero)
+		if (regId != xmmPQ.Id && ((xmmMap[regId].VFreg == 33 && !EmuConfig.Gamefixes.IbitHack) || xmmMap[regId].isZero))
 			return false;
 		else
 			return true;
@@ -347,15 +596,25 @@ public:
 			return false;
 	}
 
+	bool checkCachedGPR(int regId)
+	{
+		if (regId < gprTotal)
+			return gprMap[regId].VIreg >= 0 || gprMap[regId].isNeeded;
+		else
+			return false;
+	}
+
 	void clearReg(const xmm& reg) { clearReg(reg.Id); }
 	void clearReg(int regId)
 	{
 		microMapXMM& clear = xmmMap[regId];
-		clear.VFreg    = -1;
-		clear.count    =  0;
-		clear.xyzw     =  0;
-		clear.isNeeded =  0;
-		clear.isZero   =  0;
+		if (regAllocCOP2 && (clear.isNeeded || clear.VFreg >= 0))
+		{
+			pxAssert(pxmmregs[regId].type == XMMTYPE_VFREG);
+			pxmmregs[regId].inuse = false;
+		}
+
+		clear = {-1, 0, 0, false, false};
 	}
 
 	void clearRegVF(int VFreg)
@@ -365,6 +624,24 @@ public:
 			if (xmmMap[i].VFreg == VFreg)
 				clearReg(i);
 		}
+	}
+
+	void clearRegCOP2(int xmmReg)
+	{
+		if (regAllocCOP2)
+			clearReg(xmmReg);
+	}
+
+	void updateCOP2AllocState(int rn)
+	{
+		if (!regAllocCOP2)
+			return;
+
+		const bool dirty = (xmmMap[rn].VFreg > 0 && xmmMap[rn].xyzw != 0);
+		pxAssert(pxmmregs[rn].type == XMMTYPE_VFREG);
+		pxmmregs[rn].reg = xmmMap[rn].VFreg;
+		pxmmregs[rn].mode = dirty ? (MODE_READ | MODE_WRITE) : MODE_READ;
+		pxmmregs[rn].needed = xmmMap[rn].isNeeded;
 	}
 
 	// Writes back modified reg to memory.
@@ -405,6 +682,7 @@ public:
 				mapX.count    = counter;
 				mapX.xyzw     = 0;
 				mapX.isNeeded = false;
+				updateCOP2AllocState(reg.Id);
 				return;
 			}
 			clearReg(reg);
@@ -452,6 +730,7 @@ public:
 							mapI.xyzw  = 0xf;
 							mapI.count = counter;
 							mergeRegs  = 2;
+							updateCOP2AllocState(i);
 						}
 						else
 							clearReg(i); // Clears when mergeRegs is 0 or 2
@@ -465,6 +744,12 @@ public:
 			else
 				clearReg(reg); // If Reg was temp or vf0, then invalidate itself
 		}
+		else if (regAllocCOP2 && clear.VFreg < 0)
+		{
+			// free on the EE side
+			pxAssert(pxmmregs[reg.Id].type == XMMTYPE_VFREG);
+			pxmmregs[reg.Id].inuse = false;
+		}
 	}
 
 	// vfLoadReg  = VF reg to be loaded to the xmm register
@@ -475,7 +760,7 @@ public:
 	// To load a temp reg use the default param values, vfLoadReg = -1 and vfWriteReg = -1.
 	// To load a full reg which won't be modified and you want cached, specify vfLoadReg >= 0 and vfWriteReg = -1
 	// To load a reg which you don't want written back or cached, specify vfLoadReg >= 0 and vfWriteReg = 0
-	const xmm& allocReg(int vfLoadReg = -1, int vfWriteReg = -1, int xyzw = 0, bool cloneWrite = 1)
+	const xmm& allocReg(int vfLoadReg = -1, int vfWriteReg = -1, int xyzw = 0, bool cloneWrite = true)
 	{
 		//DevCon.WriteLn("vfLoadReg = %02d, vfWriteReg = %02d, xyzw = %x, clone = %d",vfLoadReg,vfWriteReg,xyzw,(int)cloneWrite);
 		counter++;
@@ -494,7 +779,7 @@ public:
 					{
 						if (cloneWrite) // Clone Reg so as not to use the same Cached Reg
 						{
-							z = findFreeReg();
+							z = findFreeReg(vfWriteReg);
 							const xmm& xmmZ = xmm::GetInstance(z);
 							writeBackReg(xmmZ);
 
@@ -527,11 +812,13 @@ public:
 					}
 					xmmMap[z].count = counter;
 					xmmMap[z].isNeeded = true;
+					updateCOP2AllocState(z);
+
 					return xmm::GetInstance(z);
 				}
 			}
 		}
-		int x = findFreeReg();
+		int x = findFreeReg((vfWriteReg >= 0) ? vfWriteReg : vfLoadReg);
 		const xmm& xmmX = xmm::GetInstance(x);
 		writeBackReg(xmmX);
 
@@ -564,6 +851,288 @@ public:
 		xmmMap[x].isZero = (vfLoadReg == 0);
 		xmmMap[x].count    = counter;
 		xmmMap[x].isNeeded = true;
+		updateCOP2AllocState(x);
 		return xmmX;
+	}
+
+	void clearGPR(const xRegisterInt& reg) { clearGPR(reg.GetId()); }
+
+	void clearGPR(int regId)
+	{
+		microMapGPR& clear = gprMap[regId];
+
+		if (regAllocCOP2)
+		{
+			if (x86regs[regId].inuse && x86regs[regId].type == X86TYPE_VIREG)
+			{
+				pxAssert(x86regs[regId].reg == clear.VIreg);
+				_freeX86regWithoutWriteback(regId);
+			}
+		}
+
+		clear.VIreg = -1;
+		clear.count = 0;
+		clear.isNeeded = 0;
+		clear.dirty = false;
+		clear.isZeroExtended = false;
+	}
+
+	void clearGPRCOP2(int regId)
+	{
+		if (regAllocCOP2)
+			clearGPR(regId);
+	}
+
+	void updateCOP2AllocState(const xRegisterInt& reg)
+	{
+		if (!regAllocCOP2)
+			return;
+
+		const u32 rn = reg.GetId();
+		const bool dirty = (gprMap[rn].VIreg >= 0 && gprMap[rn].dirty);
+		pxAssert(x86regs[rn].type == X86TYPE_VIREG);
+		x86regs[rn].reg = gprMap[rn].VIreg;
+		x86regs[rn].counter = gprMap[rn].count;
+		x86regs[rn].mode = dirty ? (MODE_READ | MODE_WRITE) : MODE_READ;
+		x86regs[rn].needed = gprMap[rn].isNeeded;
+	}
+
+	void writeBackReg(const xRegisterInt& reg, bool clearDirty)
+	{
+		microMapGPR& mapX = gprMap[reg.GetId()];
+		pxAssert(mapX.usable || !mapX.dirty);
+		if (mapX.dirty)
+		{
+			pxAssert(mapX.VIreg > 0);
+			if (mapX.VIreg < 16)
+				xMOV(ptr16[&getVI(mapX.VIreg)], xRegister16(reg));
+			if (clearDirty)
+			{
+				mapX.dirty = false;
+				updateCOP2AllocState(reg);
+			}
+		}
+	}
+
+	void clearNeeded(const xRegisterInt& reg)
+	{
+		pxAssert(reg.GetId() < gprTotal);
+		microMapGPR& clear = gprMap[reg.GetId()];
+		clear.isNeeded = false;
+		if (regAllocCOP2)
+			x86regs[reg.GetId()].needed = false;
+	}
+
+	void unbindAnyVIAllocations(int reg, bool& backup)
+	{
+		for (int i = 0; i < gprTotal; i++)
+		{
+			microMapGPR& mapI = gprMap[i];
+			if (mapI.VIreg == reg)
+			{
+				if (backup)
+				{
+					writeVIBackup(xRegister32(i));
+					backup = false;
+				}
+
+				// if it's needed, we just unbind the allocation and preserve it, otherwise clear
+				if (mapI.isNeeded)
+				{
+					MVURALOG("  unbind %d to %d for write\n", i, reg);
+					if (regAllocCOP2)
+					{
+						pxAssert(x86regs[i].type == X86TYPE_VIREG && x86regs[i].reg == static_cast<u8>(mapI.VIreg));
+						x86regs[i].reg = -1;
+					}
+
+					mapI.VIreg = -1;
+					mapI.dirty = false;
+					mapI.isZeroExtended = false;
+				}
+				else
+				{
+					MVURALOG("  clear %d to %d for write\n", i, reg);
+					clearGPR(i);
+				}
+
+				// shouldn't be any others...
+				for (int j = i + 1; j < gprTotal; j++)
+				{
+					pxAssert(gprMap[j].VIreg != reg);
+				}
+
+				break;
+			}
+		}
+	}
+
+	const xRegister32& allocGPR(int viLoadReg = -1, int viWriteReg = -1, bool backup = false, bool zext_if_dirty = false)
+	{
+		// TODO: When load != write, we should check whether load is used later, and if so, copy it.
+
+		//DevCon.WriteLn("viLoadReg = %02d, viWriteReg = %02d, backup = %d",viLoadReg,viWriteReg,(int)backup);
+		const int this_counter = regAllocCOP2 ? (g_x86AllocCounter++) : (counter++);
+		if (viLoadReg == 0 || viWriteReg == 0)
+		{
+			// write zero register as temp and discard later
+			if (viWriteReg == 0)
+			{
+				int x = findFreeGPR(-1);
+				const xRegister32& gprX = xRegister32::GetInstance(x);
+				writeBackReg(gprX, true);
+				xXOR(gprX, gprX);
+				gprMap[x].VIreg = -1;
+				gprMap[x].dirty = false;
+				gprMap[x].count = this_counter;
+				gprMap[x].isNeeded = true;
+				gprMap[x].isZeroExtended = true;
+				MVURALOG("  alloc zero to scratch %d\n", x);
+				return gprX;
+			}
+		}
+
+		if (viLoadReg >= 0) // Search For Cached Regs
+		{
+			for (int i = 0; i < gprTotal; i++)
+			{
+				microMapGPR& mapI = gprMap[i];
+				if (mapI.VIreg == viLoadReg)
+				{
+					// Do this first, there is a case where when loadReg != writeReg, the findFreeGPR can steal the loadReg
+					gprMap[i].count = this_counter;
+
+					if (viWriteReg >= 0) // Reg will be modified
+					{
+						if (viLoadReg != viWriteReg)
+						{
+							// kill any allocations of viWriteReg
+							unbindAnyVIAllocations(viWriteReg, backup);
+
+							// allocate a new register for writing to
+							int x = findFreeGPR(viWriteReg);
+							const xRegister32& gprX = xRegister32::GetInstance(x);
+
+							writeBackReg(gprX, true);
+
+							// writeReg not cached, needs backing up
+							if (backup && gprMap[x].VIreg != viWriteReg)
+							{
+								xMOVZX(gprX, ptr16[&getVI(viWriteReg)]);
+								writeVIBackup(gprX);
+								backup = false;
+							}
+
+							if (zext_if_dirty)
+								xMOVZX(gprX, xRegister16(i));
+							else
+								xMOV(gprX, xRegister32(i));
+							gprMap[x].isZeroExtended = zext_if_dirty;
+							MVURALOG("  clone write %d in %d to %d for %d\n", viLoadReg, i, x, viWriteReg);
+							std::swap(x, i);
+						}
+						else
+						{
+							// writing to it, no longer zero extended
+							gprMap[i].isZeroExtended = false;
+						}
+
+						gprMap[i].VIreg = viWriteReg;
+						gprMap[i].dirty = true;
+					}
+					else if (zext_if_dirty && !gprMap[i].isZeroExtended)
+					{
+						xMOVZX(xRegister32(i), xRegister16(i));
+						gprMap[i].isZeroExtended = true;
+					}
+
+					gprMap[i].isNeeded = true;
+
+					if (backup)
+						writeVIBackup(xRegister32(i));
+
+					if (regAllocCOP2)
+					{
+						pxAssert(x86regs[i].inuse && x86regs[i].type == X86TYPE_VIREG);
+						x86regs[i].reg = gprMap[i].VIreg;
+						x86regs[i].mode = gprMap[i].dirty ? (MODE_WRITE | MODE_READ) : (MODE_READ);
+					}
+
+					MVURALOG("  returning cached in %d\n", i);
+					return xRegister32::GetInstance(i);
+				}
+			}
+		}
+
+		if (viWriteReg >= 0) // Writing a new value, make sure this register isn't cached already
+			unbindAnyVIAllocations(viWriteReg, backup);
+
+		int x = findFreeGPR(viLoadReg);
+		const xRegister32& gprX = xRegister32::GetInstance(x);
+		writeBackReg(gprX, true);
+
+		// Special case: we need to back up the destination register, but it might not have already
+		// been cached. If so, we need to load the old value from state and back it up. Otherwise,
+		// it's going to get lost when we eventually write this register back.
+		if (backup && viLoadReg >= 0 && viWriteReg > 0 && viLoadReg != viWriteReg)
+		{
+			xMOVZX(gprX, ptr16[&getVI(viWriteReg)]);
+			writeVIBackup(gprX);
+			backup = false;
+		}
+
+		if (viLoadReg > 0)
+			xMOVZX(gprX, ptr16[&getVI(viLoadReg)]);
+		else if (viLoadReg == 0)
+			xXOR(gprX, gprX);
+
+		gprMap[x].VIreg = viLoadReg;
+		gprMap[x].isZeroExtended = true;
+		if (viWriteReg >= 0)
+		{
+			gprMap[x].VIreg = viWriteReg;
+			gprMap[x].dirty = true;
+			gprMap[x].isZeroExtended = false;
+
+			if (backup)
+			{
+				if (viLoadReg < 0 && viWriteReg > 0)
+					xMOVZX(gprX, ptr16[&getVI(viWriteReg)]);
+
+				writeVIBackup(gprX);
+			}
+		}
+
+		gprMap[x].count = this_counter;
+		gprMap[x].isNeeded = true;
+
+		if (regAllocCOP2)
+		{
+			pxAssert(x86regs[x].inuse && x86regs[x].type == X86TYPE_VIREG);
+			x86regs[x].reg = gprMap[x].VIreg;
+			x86regs[x].mode = gprMap[x].dirty ? (MODE_WRITE | MODE_READ) : (MODE_READ);
+		}
+
+		MVURALOG("  returning new %d\n", x);
+		return gprX;
+	}
+
+	void moveVIToGPR(const xRegisterInt& reg, int vi, bool signext = false)
+	{
+		pxAssert(vi >= 0);
+		if (vi == 0)
+		{
+			xXOR(xRegister32(reg), xRegister32(reg));
+			return;
+		}
+
+		// TODO: Check liveness/usedness before allocating.
+		// TODO: Check whether zero-extend is needed everywhere heae. Loadstores are.
+		const xRegister32& srcreg = allocGPR(vi);
+		if (signext)
+			xMOVSX(xRegister32(reg), xRegister16(srcreg));
+		else
+			xMOVZX(xRegister32(reg), xRegister16(srcreg));
+		clearNeeded(srcreg);
 	}
 };

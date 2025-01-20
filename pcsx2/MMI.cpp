@@ -1,22 +1,8 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-
-#include "PrecompiledHeader.h"
 #include "Common.h"
-#include "common/MathUtils.h"
+#include "common/BitUtils.h"
 
 namespace R5900 {
 namespace Interpreter {
@@ -151,8 +137,8 @@ void PLZCW() {
 		return;
 
 	// Return the leading sign bits, excluding the original bit
-	cpuRegs.GPR.r[_Rd_].UL[0] = count_leading_sign_bits(cpuRegs.GPR.r[_Rs_].SL[0]) - 1;
-	cpuRegs.GPR.r[_Rd_].UL[1] = count_leading_sign_bits(cpuRegs.GPR.r[_Rs_].SL[1]) - 1;
+	cpuRegs.GPR.r[_Rd_].UL[0] = Common::CountLeadingSignBits(cpuRegs.GPR.r[_Rs_].SL[0]) - 1;
+	cpuRegs.GPR.r[_Rd_].UL[1] = Common::CountLeadingSignBits(cpuRegs.GPR.r[_Rs_].SL[1]) - 1;
 }
 
 __fi void PMFHL_CLAMP(u16& dst, s32 src)
@@ -183,7 +169,7 @@ void PMFHL() {
 		case 0x02: // SLW
 			{
 				s64 TempS64 = ((u64)cpuRegs.HI.UL[0] << 32) | (u64)cpuRegs.LO.UL[0];
-											
+
 				if (TempS64 >= 0x000000007fffffffLL) {
 					cpuRegs.GPR.r[_Rd_].UD[0] = 0x000000007fffffffLL;
 				} else if (TempS64 <= -0x80000000LL) {

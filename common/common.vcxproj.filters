@@ -10,12 +10,6 @@
     <ClCompile Include="Console.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="emitter\cpudetect.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Exceptions.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="emitter\fpu.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -31,22 +25,13 @@
     <ClCompile Include="emitter\legacy_sse.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="emitter\LnxCpuDetect.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Linux\LnxHostSys.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Linux\LnxMisc.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Linux\LnxThreads.cpp">
+    <ClCompile Include="emitter\avx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="emitter\movs.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Misc.cpp">
+    <ClCompile Include="HostSys.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Perf.cpp">
@@ -55,16 +40,13 @@
     <ClCompile Include="PrecompiledHeader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ReadbackSpinManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Semaphore.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="emitter\simd.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="VirtualMemory.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="emitter\WinCpuDetect.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Windows\WinHostSys.cpp">
@@ -91,18 +73,6 @@
     <ClCompile Include="WindowInfo.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="GL\ContextWGL.cpp">
-      <Filter>Source Files\GL</Filter>
-    </ClCompile>
-    <ClCompile Include="GL\Context.cpp">
-      <Filter>Source Files\GL</Filter>
-    </ClCompile>
-    <ClCompile Include="GL\StreamBuffer.cpp">
-      <Filter>Source Files\GL</Filter>
-    </ClCompile>
-    <ClCompile Include="FileSystem.cpp">
-      <Filter>Source Files\GL</Filter>
-    </ClCompile>
     <ClCompile Include="StringUtil.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -112,76 +82,49 @@
     <ClCompile Include="ProgressCallback.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Vulkan\Builders.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\Context.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\Loader.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\ShaderCache.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\ShaderCompiler.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\StreamBuffer.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\SwapChain.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\Texture.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\Util.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
     <ClCompile Include="MD5Digest.cpp">
       <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="GL\Program.cpp">
-      <Filter>Source Files\GL</Filter>
-    </ClCompile>
-    <ClCompile Include="GL\ShaderCache.cpp">
-      <Filter>Source Files\GL</Filter>
-    </ClCompile>
-    <ClCompile Include="Vulkan\vk_mem_alloc.cpp">
-      <Filter>Source Files\Vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D11\ShaderCache.cpp">
-      <Filter>Source Files\D3D11</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D11\ShaderCompiler.cpp">
-      <Filter>Source Files\D3D11</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D12\Context.cpp">
-      <Filter>Source Files\D3D12</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D12\DescriptorHeapManager.cpp">
-      <Filter>Source Files\D3D12</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D12\ShaderCache.cpp">
-      <Filter>Source Files\D3D12</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D12\StreamBuffer.cpp">
-      <Filter>Source Files\D3D12</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D12\Texture.cpp">
-      <Filter>Source Files\D3D12</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D12\Util.cpp">
-      <Filter>Source Files\D3D12</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D12\Builders.cpp">
-      <Filter>Source Files\D3D12</Filter>
     </ClCompile>
     <ClCompile Include="StackWalker.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="CrashHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Image.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="HTTPDownloader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="HTTPDownloaderCurl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="HTTPDownloaderWinHTTP.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MemorySettingsInterface.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="DynamicLibrary.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="WAVWriter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="FileSystem.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Error.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Assertions.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="TextureDecompress.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SmallString.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -201,19 +144,10 @@
     <ClInclude Include="Console.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="emitter\cpudetect_internal.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="emitter\implement\dwshift.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="EventSource.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Exceptions.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="General.h">
+    <ClInclude Include="HostSys.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="emitter\implement\group1.h">
@@ -249,22 +183,16 @@
     <ClInclude Include="emitter\legacy_types.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="MathUtils.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="MemcpyFast.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="Path.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="PrecompiledHeader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="RedtapeWindows.h">
+    <ClInclude Include="ReadbackSpinManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="SafeArray.h">
+    <ClInclude Include="RedtapeWindows.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="emitter\implement\simd_arithmetic.h">
@@ -285,13 +213,13 @@
     <ClInclude Include="emitter\implement\movs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="emitter\implement\avx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="Threading.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="emitter\implement\test.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="emitter\tools.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="emitter\x86emitter.h">
@@ -315,26 +243,11 @@
     <ClInclude Include="SettingsWrapper.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Align.h">
+    <ClInclude Include="BitUtils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="WindowInfo.h">
       <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="BitCast.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="GL\Context.h">
-      <Filter>Header Files\GL</Filter>
-    </ClInclude>
-    <ClInclude Include="GL\ContextWGL.h">
-      <Filter>Header Files\GL</Filter>
-    </ClInclude>
-    <ClInclude Include="GL\StreamBuffer.h">
-      <Filter>Header Files\GL</Filter>
-    </ClInclude>
-    <ClInclude Include="FileSystem.h">
-      <Filter>Header Files\GL</Filter>
     </ClInclude>
     <ClInclude Include="StringUtil.h">
       <Filter>Header Files</Filter>
@@ -354,74 +267,11 @@
     <ClInclude Include="HashCombine.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Vulkan\ShaderCompiler.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\StreamBuffer.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\SwapChain.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\Texture.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\Util.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\Builders.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\Context.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\EntryPoints.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\Loader.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="Vulkan\ShaderCache.h">
-      <Filter>Header Files\Vulkan</Filter>
-    </ClInclude>
     <ClInclude Include="MD5Digest.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="GL\Program.h">
-      <Filter>Header Files\GL</Filter>
-    </ClInclude>
-    <ClInclude Include="GL\ShaderCache.h">
-      <Filter>Header Files\GL</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D11\ShaderCache.h">
-      <Filter>Header Files\D3D11</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D11\ShaderCompiler.h">
-      <Filter>Header Files\D3D11</Filter>
-    </ClInclude>
     <ClInclude Include="ZipHelpers.h">
       <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D12\Context.h">
-      <Filter>Header Files\D3D12</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D12\DescriptorHeapManager.h">
-      <Filter>Header Files\D3D12</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D12\ShaderCache.h">
-      <Filter>Header Files\D3D12</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D12\StreamBuffer.h">
-      <Filter>Header Files\D3D12</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D12\Texture.h">
-      <Filter>Header Files\D3D12</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D12\Util.h">
-      <Filter>Header Files\D3D12</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D12\Builders.h">
-      <Filter>Header Files\D3D12</Filter>
     </ClInclude>
     <ClInclude Include="CrashHandler.h">
       <Filter>Header Files</Filter>
@@ -429,6 +279,62 @@
     <ClInclude Include="StackWalker.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="LRUCache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Image.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Easing.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="HTTPDownloader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="HTTPDownloaderCurl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="HTTPDownloaderWinHTTP.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="HeterogeneousContainers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="MemorySettingsInterface.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="HeapArray.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DynamicLibrary.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="WAVWriter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="FileSystem.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ByteSwap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="WrappedMemCopy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Error.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="TextureDecompress.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SmallString.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="VectorIntrin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SingleRegisterTypes.h" />
+    <ClInclude Include="FPControl.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Source Files">
@@ -437,38 +343,6 @@
     <Filter Include="Header Files">
       <UniqueIdentifier>{eef579af-e6a8-4d3b-a88e-c0e4cad9e5d8}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\GL">
-      <UniqueIdentifier>{92d1bb2d-d172-4356-b9f4-a8fcc8e7fcce}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\GL">
-      <UniqueIdentifier>{5e76b340-cb0e-4946-83ec-7d72e397cac8}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Vulkan">
-      <UniqueIdentifier>{94154238-8b02-44f8-a7b8-3612e7bfa33c}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\Vulkan">
-      <UniqueIdentifier>{46f36c68-0e0e-4acd-a621-3365e3167c4f}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\D3D11">
-      <UniqueIdentifier>{f428aac0-c9c5-4b66-b218-9829dce45d13}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\D3D11">
-      <UniqueIdentifier>{764ddf71-77a6-41b8-bc65-1eef94b6997b}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\D3D12">
-      <UniqueIdentifier>{96f78eb9-089b-4166-a23e-78c4e7d90b64}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\D3D12">
-      <UniqueIdentifier>{cf37623d-bb05-4c54-8c72-1c20b5331c69}</UniqueIdentifier>
-    </Filter>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="EventSource.inl">
-      <Filter>Source Files</Filter>
-    </None>
-    <None Include="Vulkan\EntryPoints.inl">
-      <Filter>Source Files\Vulkan</Filter>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="FastJmp.asm">

@@ -1,19 +1,11 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
+
+#include "common/Pcsx2Defs.h"
+
+#include <ctime>
 
 class GSPerfMon
 {
@@ -27,9 +19,9 @@ public:
 		Swizzle,
 		Unswizzle,
 		Fillrate,
-		Quad,
 		SyncPoint,
 		Barriers,
+		RenderPasses,
 		CounterLast,
 
 		// Reused counters for HW.
@@ -38,21 +30,24 @@ public:
 	};
 
 protected:
-	double m_counters[CounterLast];
-	double m_stats[CounterLast];
-	u64 m_frame;
-	clock_t m_lastframe;
-	int m_count;
-	int m_disp_fb_sprite_blits;
+	double m_counters[CounterLast] = {};
+	double m_stats[CounterLast] = {};
+	u64 m_frame = 0;
+	clock_t m_lastframe = 0;
+	int m_count = 0;
+	int m_disp_fb_sprite_blits = 0;
 
 public:
 	GSPerfMon();
 
+	void Reset();
+
 	void SetFrame(u64 frame) { m_frame = frame; }
 	u64 GetFrame() { return m_frame; }
-	void EndFrame();
+	void EndFrame(bool frame_only);
 
 	void Put(counter_t c, double val) { m_counters[c] += val; }
+	double GetCounter(counter_t c) { return m_counters[c]; }
 	double Get(counter_t c) { return m_stats[c]; }
 	void Update();
 

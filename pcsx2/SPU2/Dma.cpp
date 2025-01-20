@@ -1,27 +1,18 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
-#include "Global.h"
-#include "Dma.h"
+#include "SPU2/defs.h"
+#include "SPU2/Debug.h"
+#include "SPU2/Dma.h"
+#include "SPU2/spu2.h"
 #include "R3000A.h"
 #include "IopHw.h"
+#include "Config.h"
 
-#include "spu2.h" // temporary until I resolve cyclePtr/TimeUpdate dependencies.
+#ifdef PCSX2_DEVBUILD
 
-extern u8 callirq;
+#define safe_fclose(ptr) \
+	((void)((((ptr) != nullptr) && (std::fclose(ptr), !!0)), (ptr) = nullptr))
 
 static FILE* DMA4LogFile = nullptr;
 static FILE* DMA7LogFile = nullptr;
@@ -33,18 +24,18 @@ static FILE* REGWRTLogFile[2] = {0, 0};
 
 void DMALogOpen()
 {
-	if (!DMALog())
+	if (!SPU2::DMALog())
 		return;
-	DMA4LogFile = OpenBinaryLog(DMA4LogFileName.c_str());
-	DMA7LogFile = OpenBinaryLog(DMA7LogFileName.c_str());
-	ADMA4LogFile = OpenBinaryLog("adma4.raw");
-	ADMA7LogFile = OpenBinaryLog("adma7.raw");
-	ADMAOutLogFile = OpenBinaryLog("admaOut.raw");
+	DMA4LogFile = EmuFolders::OpenLogFile("SPU2dma4.dat", "wb");
+	DMA7LogFile = EmuFolders::OpenLogFile("SPU2dma7.dat", "wb");
+	ADMA4LogFile = EmuFolders::OpenLogFile("adma4.raw", "wb");
+	ADMA7LogFile = EmuFolders::OpenLogFile("adma7.raw", "wb");
+	ADMAOutLogFile = EmuFolders::OpenLogFile("admaOut.raw", "wb");
 }
 
 void DMA4LogWrite(void* lpData, u32 ulSize)
 {
-	if (!DMALog())
+	if (!SPU2::DMALog())
 		return;
 	if (!DMA4LogFile)
 		return;
@@ -53,7 +44,7 @@ void DMA4LogWrite(void* lpData, u32 ulSize)
 
 void DMA7LogWrite(void* lpData, u32 ulSize)
 {
-	if (!DMALog())
+	if (!SPU2::DMALog())
 		return;
 	if (!DMA7LogFile)
 		return;
@@ -62,7 +53,7 @@ void DMA7LogWrite(void* lpData, u32 ulSize)
 
 void ADMAOutLogWrite(void* lpData, u32 ulSize)
 {
-	if (!DMALog())
+	if (!SPU2::DMALog())
 		return;
 	if (!ADMAOutLogFile)
 		return;
@@ -71,7 +62,7 @@ void ADMAOutLogWrite(void* lpData, u32 ulSize)
 
 void RegWriteLog(u32 core, u16 value)
 {
-	if (!DMALog())
+	if (!SPU2::DMALog())
 		return;
 	if (!REGWRTLogFile[core])
 		return;
@@ -89,9 +80,11 @@ void DMALogClose()
 	safe_fclose(ADMAOutLogFile);
 }
 
+#endif
+
 void V_Core::LogAutoDMA(FILE* fp)
 {
-	if (!DMALog() || !fp || !DMAPtr)
+	if (!SPU2::DMALog() || !fp || !DMAPtr)
 		return;
 	fwrite(DMAPtr + InputDataProgress, 0x400, 1, fp);
 }
@@ -108,8 +101,10 @@ void V_Core::AutoDMAReadBuffer(int mode) //mode: 0= split stereo; 1 = do not spl
 
 	int size = std::min(InputDataLeft, (u32)0x200);
 	if (!leftbuffer)
-		size = 0x100;
+		size = std::min(size, 0x100);
+#ifdef PCSX2_DEVBUILD
 	LogAutoDMA(Index ? ADMA7LogFile : ADMA4LogFile);
+#endif
 	//ConLog("Refilling ADMA buffer at %x OutPos %x with %x\n", spos, OutPos, size);
 	// HACKFIX!! DMAPtr can be invalid after a savestate load, so the savestate just forces it
 	// to nullptr and we ignore it here.  (used to work in old VM editions of PCSX2 with fixed
@@ -157,9 +152,11 @@ void V_Core::StartADMAWrite(u16* pMem, u32 sz)
 
 	TimeUpdate(psxRegs.cycle);
 
-	if (MsgAutoDMA())
-		ConLog("* SPU2: DMA%c AutoDMA Transfer of %d bytes to %x (%02x %x %04x).OutPos %x\n",
+	if (SPU2::MsgAutoDMA())
+	{
+		SPU2::ConLog("* SPU2: DMA%c AutoDMA Transfer of %d bytes to %x (%02x %x %04x).OutPos %x\n",
 			   GetDmaIndexChar(), size << 1, ActiveTSA, DMABits, AutoDMACtrl, (~Regs.ATTR) & 0xffff, OutPos);
+	}
 
 	InputDataProgress = 0;
 	TADR = MADR + (size << 1);
@@ -191,7 +188,8 @@ void V_Core::StartADMAWrite(u16* pMem, u32 sz)
 	}
 	else
 	{
-		ConLog("ADMA%c Error Size of %x too small\n", GetDmaIndexChar(), size);
+		if (SPU2::MsgToConsole())
+			SPU2::ConLog("ADMA%c Error Size of %x too small\n", GetDmaIndexChar(), size);
 		InputDataLeft = 0;
 		DMAICounter = size * 4;
 		LastClock = psxRegs.cycle;
@@ -200,7 +198,7 @@ void V_Core::StartADMAWrite(u16* pMem, u32 sz)
 
 void V_Core::PlainDMAWrite(u16* pMem, u32 size)
 {
-	if (MsgToConsole())
+	if (SPU2::MsgToConsole())
 	{
 		// Don't need this anymore. Target may still be good to know though.
 		/*if((uptr)pMem & 15)
@@ -210,7 +208,7 @@ void V_Core::PlainDMAWrite(u16* pMem, u32 size)
 
 		if (ActiveTSA & 7)
 		{
-			ConLog("* SPU2 DMA Write > Misaligned target. Core: %d  IOP: %p  TSA: 0x%x  Size: 0x%x\n", Index, (void*)DMAPtr, ActiveTSA, ReadSize);
+			SPU2::ConLog("* SPU2 DMA Write > Misaligned target. Core: %d  IOP: %p  TSA: 0x%x  Size: 0x%x\n", Index, (void*)DMAPtr, ActiveTSA, ReadSize);
 		}
 	}
 
@@ -224,10 +222,12 @@ void V_Core::PlainDMAWrite(u16* pMem, u32 size)
 	Regs.STATX |= 0x400;
 	TADR = MADR + (size << 1);
 
-	if (MsgDMA())
-		ConLog("* SPU2: DMA%c Write Transfer of %d bytes to %x (%02x %x %04x). IRQE = %d IRQA = %x \n",
+	if (SPU2::MsgDMA())
+	{
+		SPU2::ConLog("* SPU2: DMA%c Write Transfer of %d bytes to %x (%02x %x %04x). IRQE = %d IRQA = %x \n",
 			GetDmaIndexChar(), size << 1, ActiveTSA, DMABits, AutoDMACtrl, Regs.ATTR & 0xffff,
 			Cores[Index].IRQEnable, Cores[Index].IRQA);
+	}
 
 	FinishDMAwrite();
 }
@@ -241,13 +241,14 @@ void V_Core::FinishDMAwrite()
 
 	DMAICounter = ReadSize;
 
+#ifdef PCSX2_DEVBUILD
 	if (Index == 0)
 		DMA4LogWrite(DMAPtr, ReadSize << 1);
 	else
 		DMA7LogWrite(DMAPtr, ReadSize << 1);
+#endif
 
 	u32 buff1end = ActiveTSA + std::min(ReadSize, (u32)0x100 + std::abs(DMAICounter / 4));
-	u32 start = ActiveTSA;
 	u32 buff2end = 0;
 	if (buff1end > 0x100000)
 	{
@@ -287,6 +288,7 @@ void V_Core::FinishDMAwrite()
 		// memory below 0x2800 (registers and such)
 		//const u32 endpt2 = (buff2end + roundUp) / indexer_scalar;
 		//memset( pcm_cache_flags, 0, endpt2 );
+		const u32 start = ActiveTSA;
 		TDA = buff1end;
 
 		DMAPtr += TDA - ActiveTSA;
@@ -312,7 +314,7 @@ void V_Core::FinishDMAwrite()
 			// understanding would trigger the interrupt early causing it to switch buffers again immediately
 			// and an interrupt never fires again, leaving the voices looping the same samples forever.
 
-			if (Cores[i].IRQEnable && (Cores[i].IRQA > start || Cores[i].IRQA <= TDA))
+			if (Cores[i].IRQEnable && (Cores[i].IRQA > start || Cores[i].IRQA < TDA))
 			{
 				//ConLog("DMAwrite Core %d: IRQ Called (IRQ passed). IRQA = %x Cycles = %d\n", i, Cores[i].IRQA, Cycles );
 				SetIrqCallDMA(i);
@@ -330,7 +332,7 @@ void V_Core::FinishDMAwrite()
 		// Important: Test both core IRQ settings for either DMA!
 		for (int i = 0; i < 2; i++)
 		{
-			if (Cores[i].IRQEnable && (Cores[i].IRQA > ActiveTSA && Cores[i].IRQA <= TDA))
+			if (Cores[i].IRQEnable && (Cores[i].IRQA > ActiveTSA && Cores[i].IRQA < TDA))
 			{
 				//ConLog("DMAwrite Core %d: IRQ Called (IRQ passed). IRQA = %x Cycles = %d\n", i, Cores[i].IRQA, Cycles );
 				SetIrqCallDMA(i);
@@ -343,15 +345,15 @@ void V_Core::FinishDMAwrite()
 
 	DMAICounter = (DMAICounter - ReadSize) * 4;
 
-	if (((psxCounters[6].sCycleT + psxCounters[6].CycleT) - psxRegs.cycle) > (u32)DMAICounter)
+	if (((psxCounters[6].startCycle + psxCounters[6].deltaCycles) - psxRegs.cycle) > (u32)DMAICounter)
 	{
-		psxCounters[6].sCycleT = psxRegs.cycle;
-		psxCounters[6].CycleT = DMAICounter;
+		psxCounters[6].startCycle = psxRegs.cycle;
+		psxCounters[6].deltaCycles = DMAICounter;
 
-		psxNextCounter -= (psxRegs.cycle - psxNextsCounter);
-		psxNextsCounter = psxRegs.cycle;
-		if (psxCounters[6].CycleT < psxNextCounter)
-			psxNextCounter = psxCounters[6].CycleT;
+		psxNextDeltaCounter -= (psxRegs.cycle - psxNextStartCounter);
+		psxNextStartCounter = psxRegs.cycle;
+		if (psxCounters[6].deltaCycles < psxNextDeltaCounter)
+			psxNextDeltaCounter = psxCounters[6].deltaCycles;
 	}
 
 	ActiveTSA = TDA;
@@ -362,7 +364,6 @@ void V_Core::FinishDMAwrite()
 void V_Core::FinishDMAread()
 {
 	u32 buff1end = ActiveTSA + std::min(ReadSize, (u32)0x100 + std::abs(DMAICounter / 4));
-	u32 start = ActiveTSA;
 	u32 buff2end = 0;
 
 	if (buff1end > 0x100000)
@@ -385,7 +386,7 @@ void V_Core::FinishDMAread()
 
 	if (buff2end > 0)
 	{
-
+		const u32 start = ActiveTSA;
 		TDA = buff1end;
 
 		DMARPtr += TDA - ActiveTSA;
@@ -404,7 +405,7 @@ void V_Core::FinishDMAread()
 
 		for (int i = 0; i < 2; i++)
 		{
-			if (Cores[i].IRQEnable && (Cores[i].IRQA > start || Cores[i].IRQA <= TDA))
+			if (Cores[i].IRQEnable && (Cores[i].IRQA > start || Cores[i].IRQA < TDA))
 			{
 				SetIrqCallDMA(i);
 			}
@@ -422,7 +423,7 @@ void V_Core::FinishDMAread()
 
 		for (int i = 0; i < 2; i++)
 		{
-			if (Cores[i].IRQEnable && (Cores[i].IRQA > ActiveTSA && Cores[i].IRQA <= TDA))
+			if (Cores[i].IRQEnable && (Cores[i].IRQA > ActiveTSA && Cores[i].IRQA < TDA))
 			{
 				SetIrqCallDMA(i);
 			}
@@ -438,15 +439,15 @@ void V_Core::FinishDMAread()
 	else
 		DMAICounter = 4;
 
-	if (((psxCounters[6].sCycleT + psxCounters[6].CycleT) - psxRegs.cycle) > (u32)DMAICounter)
+	if (((psxCounters[6].startCycle + psxCounters[6].deltaCycles) - psxRegs.cycle) > (u32)DMAICounter)
 	{
-		psxCounters[6].sCycleT = psxRegs.cycle;
-		psxCounters[6].CycleT = DMAICounter;
+		psxCounters[6].startCycle = psxRegs.cycle;
+		psxCounters[6].deltaCycles = DMAICounter;
 
-		psxNextCounter -= (psxRegs.cycle - psxNextsCounter);
-		psxNextsCounter = psxRegs.cycle;
-		if (psxCounters[6].CycleT < psxNextCounter)
-			psxNextCounter = psxCounters[6].CycleT;
+		psxNextDeltaCounter -= (psxRegs.cycle - psxNextStartCounter);
+		psxNextStartCounter = psxRegs.cycle;
+		if (psxCounters[6].deltaCycles < psxNextDeltaCounter)
+			psxNextDeltaCounter = psxCounters[6].deltaCycles;
 	}
 
 	ActiveTSA = TDA;
@@ -469,21 +470,23 @@ void V_Core::DoDMAread(u16* pMem, u32 size)
 	//Regs.ATTR |= 0x30;
 	TADR = MADR + (size << 1);
 
-	if (((psxCounters[6].sCycleT + psxCounters[6].CycleT) - psxRegs.cycle) > (u32)DMAICounter)
+	if (((psxCounters[6].startCycle + psxCounters[6].deltaCycles) - psxRegs.cycle) > (u32)DMAICounter)
 	{
-		psxCounters[6].sCycleT = psxRegs.cycle;
-		psxCounters[6].CycleT = DMAICounter;
+		psxCounters[6].startCycle = psxRegs.cycle;
+		psxCounters[6].deltaCycles = DMAICounter;
 
-		psxNextCounter -= (psxRegs.cycle - psxNextsCounter);
-		psxNextsCounter = psxRegs.cycle;
-		if (psxCounters[6].CycleT < psxNextCounter)
-			psxNextCounter = psxCounters[6].CycleT;
+		psxNextDeltaCounter -= (psxRegs.cycle - psxNextStartCounter);
+		psxNextStartCounter = psxRegs.cycle;
+		if (psxCounters[6].deltaCycles < psxNextDeltaCounter)
+			psxNextDeltaCounter = psxCounters[6].deltaCycles;
 	}
 
-	if (MsgDMA())
-		ConLog("* SPU2: DMA%c Read Transfer of %d bytes from %x (%02x %x %04x). IRQE = %d IRQA = %x \n",
+	if (SPU2::MsgDMA())
+	{
+		SPU2::ConLog("* SPU2: DMA%c Read Transfer of %d bytes from %x (%02x %x %04x). IRQE = %d IRQA = %x \n",
 			GetDmaIndexChar(), size << 1, ActiveTSA, DMABits, AutoDMACtrl, Regs.ATTR & 0xffff,
 			Cores[Index].IRQEnable, Cores[Index].IRQA);
+	}
 }
 
 void V_Core::DoDMAwrite(u16* pMem, u32 size)
@@ -505,17 +508,17 @@ void V_Core::DoDMAwrite(u16* pMem, u32 size)
 		DebugCores[Index].dmaFlag = 2;
 	}
 
-	if (MsgToConsole())
+	if (SPU2::MsgToConsole())
 	{
 		if (TSA > 0xfffff)
 		{
-			ConLog("* SPU2: Transfer Start Address out of bounds. TSA is %x\n", TSA);
+			SPU2::ConLog("* SPU2: Transfer Start Address out of bounds. TSA is %x\n", TSA);
 		}
 	}
 
 	ActiveTSA = TSA & 0xfffff;
 
-	bool adma_enable = ((AutoDMACtrl & (Index + 1)) == (Index + 1));
+	const bool adma_enable = ((AutoDMACtrl & (Index + 1)) == (Index + 1));
 
 	if (adma_enable)
 	{

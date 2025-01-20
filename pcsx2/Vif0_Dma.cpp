@@ -1,23 +1,10 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
 #include "Vif_Dma.h"
+#include "Vif_Dynarec.h"
 #include "VUmicro.h"
-#include "newVif.h"
 
 u32 g_vif0Cycles = 0;
 
@@ -46,7 +33,7 @@ bool _VIF0chain()
 	}
 
 	pMem = (u32*)dmaGetAddr(vif0ch.madr, false);
-	if (pMem == NULL)
+	if (pMem == nullptr)
 	{
 		vif0.cmd = 0;
 		vif0.tag.size = 0;
@@ -108,13 +95,13 @@ __fi void vif0SetupTransfer()
 			ret = VIF0transfer((u32*)&masked_tag + 2, 2, true);  //Transfer Tag
 			//ret = VIF0transfer((u32*)ptag + 2, 2);  //Transfer Tag
 		}
-				
+
 		if (!ret && vif0.irqoffset.enabled)
 		{
 			vif0.inprogress = 0; // Better clear this so it has to do it again (Jak 1)
 			vif0ch.qwc = 0; // Gumball 3000 pauses the DMA when the tag stalls so we need to reset the QWC, it'll be gotten again later
 			return;        // IRQ set by VIFTransfer
-					
+
 		}
 	}
 
@@ -136,9 +123,21 @@ __fi void vif0SetupTransfer()
 
 __fi void vif0VUFinish()
 {
+	// Sync up VU0 so we don't errantly wait.
+	while (VU0.VI[REG_VPU_STAT].UL & 0x1)
+	{
+		const int cycle_diff = static_cast<int>(cpuRegs.cycle - VU0.cycle);
+
+		if ((EmuConfig.Gamefixes.VUSyncHack && cycle_diff < VU0.nextBlockCycles) || cycle_diff <= 0)
+			break;
+
+		CpuVU0->ExecuteBlock();
+	}
+
 	if (VU0.VI[REG_VPU_STAT].UL & 0x5)
 	{
 		CPU_INT(VIF_VU0_FINISH, 128);
+		CPU_SET_DMASTALL(VIF_VU0_FINISH, true);
 		return;
 	}
 
@@ -149,7 +148,8 @@ __fi void vif0VUFinish()
 		vu0Finish();
 		_cycles = VU0.cycle - _cycles;
 		//DevCon.Warning("Finishing VU0 %d cycles", _cycles);
-		CPU_INT(VIF_VU0_FINISH, _cycles * BIAS); 
+		CPU_INT(VIF_VU0_FINISH, _cycles * BIAS);
+		CPU_SET_DMASTALL(VIF_VU0_FINISH, true);
 		return;
 	}
 	vif0Regs.stat.VEW = false;
@@ -177,6 +177,7 @@ __fi void vif0Interrupt()
 	if(vif0.waitforvu)
 	{
 		CPU_INT(VIF_VU0_FINISH, 16);
+		CPU_SET_DMASTALL(DMAC_VIF0, true);
 		return;
 	}
 	if (vif0Regs.stat.VGW)
@@ -208,6 +209,7 @@ __fi void vif0Interrupt()
 			{
 				vif0Regs.stat.VPS = VPS_DECODING; //If there's more data you need to say it's decoding the next VIF CMD (Onimusha - Blade Warriors)
 				VIF_LOG("VIF0 Stalled");
+				CPU_SET_DMASTALL(DMAC_VIF0, true);
 				return;
 			}
 		}
@@ -216,11 +218,11 @@ __fi void vif0Interrupt()
 	vif0.vifstalled.enabled = false;
 
 	//Must go after the Stall, incase it's still in progress, GTC africa likes to see it still transferring.
-	if (vif0.cmd) 
+	if (vif0.cmd)
 	{
 		if(vif0.done && vif0ch.qwc == 0)	vif0Regs.stat.VPS = VPS_WAITING;
 	}
-	else		 
+	else
 	{
 		vif0Regs.stat.VPS = VPS_IDLE;
 	}
@@ -266,6 +268,7 @@ __fi void vif0Interrupt()
 	if(vif0.queued_program) vifExecQueue(0);
 	g_vif0Cycles = 0;
 	hwDmacIrq(DMAC_VIF0);
+	CPU_SET_DMASTALL(DMAC_VIF0, false);
 	vif0Regs.stat.FQC = 0;
 	DMA_LOG("VIF0 DMA End");
 }
@@ -278,7 +281,8 @@ void dmaVIF0()
 	        vif0ch.tadr, vif0ch.asr0, vif0ch.asr1);
 
 	g_vif0Cycles = 0;
-		
+	CPU_SET_DMASTALL(DMAC_VIF0, false);
+
 	if (vif0ch.qwc > 0)   // Normal Mode
 	{
 		if (vif0ch.chcr.MOD == CHAIN_MODE)

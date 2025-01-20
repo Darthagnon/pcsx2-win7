@@ -1,20 +1,6 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-
-#include "PrecompiledHeader.h"
 #include "common/AlignedMalloc.h"
 #include "R3000A.h"
 #include "Common.h"
@@ -23,57 +9,48 @@
 #include "DEV9/DEV9.h"
 #include "IopHw.h"
 
-uptr *psxMemWLUT = NULL;
-const uptr *psxMemRLUT = NULL;
+uptr *psxMemWLUT = nullptr;
+const uptr *psxMemRLUT = nullptr;
 
-IopVM_MemoryAllocMess* iopMem = NULL;
+IopVM_MemoryAllocMess* iopMem = nullptr;
 
-alignas(__pagesize) u8 iopHw[Ps2MemSize::IopHardware];
+alignas(__pagealignsize) u8 iopHw[Ps2MemSize::IopHardware];
 
-// --------------------------------------------------------------------------------------
-//  iopMemoryReserve
-// --------------------------------------------------------------------------------------
-iopMemoryReserve::iopMemoryReserve()
-	: _parent( "IOP Main Memory (2mb)", sizeof(*iopMem) )
+void iopMemAlloc()
 {
+	// TODO: Move to memmap
+	psxMemWLUT = (uptr*)_aligned_malloc(0x2000 * sizeof(uptr) * 2, 16);
+	if (!psxMemWLUT)
+		pxFailRel("Failed to allocate IOP memory lookup table");
+
+	psxMemRLUT = psxMemWLUT + 0x2000; //(uptr*)_aligned_malloc(0x10000 * sizeof(uptr),16);
+
+	iopMem = reinterpret_cast<IopVM_MemoryAllocMess*>(SysMemory::GetIOPMem());
 }
 
-void iopMemoryReserve::Reserve(VirtualMemoryManagerPtr allocator)
+void iopMemRelease()
 {
-	_parent::Reserve(std::move(allocator), HostMemoryMap::IOPmemOffset);
-	//_parent::Reserve(EmuConfig.HostMap.IOP);
-}
-
-void iopMemoryReserve::Commit()
-{
-	_parent::Commit();
-	iopMem = (IopVM_MemoryAllocMess*)m_reserve.GetPtr();
+	safe_aligned_free(psxMemWLUT);
+	psxMemRLUT = nullptr;
+	iopMem = nullptr;
 }
 
 // Note!  Resetting the IOP's memory state is dependent on having *all* psx memory allocated,
 // which is performed by MemInit and PsxMemInit()
-void iopMemoryReserve::Reset()
+void iopMemReset()
 {
-	_parent::Reset();
-
-	pxAssert( iopMem );
-
-	if (!psxMemWLUT)
-	{
-		psxMemWLUT = (uptr*)_aligned_malloc(0x2000 * sizeof(uptr) * 2, 16);
-		psxMemRLUT = psxMemWLUT + 0x2000; //(uptr*)_aligned_malloc(0x10000 * sizeof(uptr),16);
-	}
+	pxAssert(iopMem);
 
 	DbgCon.WriteLn("IOP resetting main memory...");
 
-	memset(psxMemWLUT, 0, 0x2000 * sizeof(uptr) * 2);	// clears both allocations, RLUT and WLUT
+	memset(psxMemWLUT, 0, 0x2000 * sizeof(uptr) * 2); // clears both allocations, RLUT and WLUT
 
 	// Trick!  We're accessing RLUT here through WLUT, since it's the non-const pointer.
 	// So the ones with a 0x2000 prefixed are RLUT tables.
 
 	// Map IOP main memory, which is Read/Write, and mirrored three times
 	// at 0x0, 0x8000, and 0xa000:
-	for (int i=0; i<0x0080; i++)
+	for (int i = 0; i < 0x0080; i++)
 	{
 		psxMemWLUT[i + 0x0000] = (uptr)&iopMem->Main[(i & 0x1f) << 16];
 
@@ -91,17 +68,17 @@ void iopMemoryReserve::Reset()
 	//psxMemWLUT[0xbf80] = (uptr)iopHw;
 
 	// Read-only memory areas, so don't map WLUT for these...
-	for (int i=0; i<0x0040; i++)
+	for (int i = 0; i < 0x0040; i++)
 	{
 		psxMemWLUT[i + 0x2000 + 0x1fc0] = (uptr)&eeMem->ROM[i << 16];
 	}
 
-	for (int i=0; i<0x0004; i++)
+	for (int i = 0; i < 0x0040; i++)
 	{
 		psxMemWLUT[i + 0x2000 + 0x1e00] = (uptr)&eeMem->ROM1[i << 16];
 	}
 
-	for (int i = 0; i < 0x0008; i++) 
+	for (int i = 0; i < 0x0040; i++)
 	{
 		psxMemWLUT[i + 0x2000 + 0x1e40] = (uptr)&eeMem->ROM2[i << 16];
 	}
@@ -113,17 +90,9 @@ void iopMemoryReserve::Reset()
 	// this one looks like an old hack for some special write-only memory area,
 	// but leaving it in for reference (air)
 	//for (i=0; i<0x0008; i++) psxMemWLUT[i + 0xbfc0] = (uptr)&psR[i << 16];
+
+	std::memset(iopMem, 0, sizeof(*iopMem));
 }
-
-void iopMemoryReserve::Decommit()
-{
-	_parent::Decommit();
-
-	safe_aligned_free(psxMemWLUT);
-	psxMemRLUT = NULL;
-	iopMem = NULL;
-}
-
 
 u8 iopMemRead8(u32 mem)
 {
@@ -349,7 +318,7 @@ void iopMemWrite16(u32 mem, u16 value)
 
 			default:
 				psxHu16(mem) = value;
-			break;
+				break;
 		}
 	} else
 	{
@@ -474,7 +443,7 @@ void iopMemWrite32(u32 mem, u32 value)
 
 					case 0x60:
 						psHu32(SBUS_F260) = 0;
-					return;
+						return;
 
 				}
 #if PSX_EXTRALOGS
@@ -495,13 +464,76 @@ void iopMemWrite32(u32 mem, u32 value)
 	}
 }
 
+int iopMemSafeCmpBytes(u32 mem, const void* src, u32 size)
+{
+	// can memcpy so long as pages aren't crossed
+	const u8* sptr = static_cast<const u8*>(src);
+	const u8* const sptr_end = sptr + size;
+	while (sptr != sptr_end)
+	{
+		u8* dst = iopVirtMemW<u8>(mem);
+		if (!dst)
+			return -1;
+
+		const u32 remaining_in_page = std::min(0x1000 - (mem & 0xfff), static_cast<u32>(sptr_end - sptr));
+		const int res = std::memcmp(sptr, dst, remaining_in_page);
+		if (res != 0)
+			return res;
+
+		sptr += remaining_in_page;
+		mem += remaining_in_page;
+	}
+
+	return 0;
+}
+
+bool iopMemSafeReadBytes(u32 mem, void* dst, u32 size)
+{
+	// can memcpy so long as pages aren't crossed
+	u8* dptr = static_cast<u8*>(dst);
+	u8* const dptr_end = dptr + size;
+	while (dptr != dptr_end)
+	{
+		const u8* src = iopVirtMemR<u8>(mem);
+		if (!src)
+			return false;
+
+		const u32 remaining_in_page = std::min(0x1000 - (mem & 0xfff), static_cast<u32>(dptr_end - dptr));
+		std::memcpy(dptr, src, remaining_in_page);
+		dptr += remaining_in_page;
+		mem += remaining_in_page;
+	}
+
+	return true;
+}
+
+bool iopMemSafeWriteBytes(u32 mem, const void* src, u32 size)
+{
+	// can memcpy so long as pages aren't crossed
+	const u8* sptr = static_cast<const u8*>(src);
+	const u8* const sptr_end = sptr + size;
+	while (sptr != sptr_end)
+	{
+		u8* dst = iopVirtMemW<u8>(mem);
+		if (!dst)
+			return false;
+
+		const u32 remaining_in_page = std::min(0x1000 - (mem & 0xfff), static_cast<u32>(sptr_end - sptr));
+		std::memcpy(dst, sptr, remaining_in_page);
+		sptr += remaining_in_page;
+		mem += remaining_in_page;
+	}
+
+	return true;
+}
+
 std::string iopMemReadString(u32 mem, int maxlen)
 {
-    std::string ret;
-    char c;
+	std::string ret;
+	char c;
 
-    while ((c = iopMemRead8(mem++)) && maxlen--)
-        ret.push_back(c);
+	while ((c = iopMemRead8(mem++)) && maxlen--)
+		ret.push_back(c);
 
-    return ret;
+	return ret;
 }

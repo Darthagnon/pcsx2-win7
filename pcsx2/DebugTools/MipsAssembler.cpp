@@ -1,20 +1,9 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2014-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "MipsAssembler.h"
+
+#include <cstring>
 
 // just an empty class, so that it's not necessary to remove all the calls manually
 // will make it easier to update if there are changes later on
@@ -27,7 +16,7 @@ public:
 	{
 		//
 	}
-	
+
 	static void queueError(ErrorType type, const wchar_t* text, ...)
 	{
 		//
@@ -177,7 +166,7 @@ void SplitLine(const char* Line, char* Name, char* Arguments)
 		*Name++ = *Line++;
 	}
 	*Name = 0;
-	
+
 	while (*Line == ' ' || *Line == '\t') Line++;
 
 	while (*Line != 0)
@@ -366,11 +355,12 @@ bool MipsCheckImmediate(const char* Source, DebugInterface* cpu, int& dest, int&
 	RetLen = SourceLen;
 
 	PostfixExpression postfix;
-	if (!cpu->initExpression(Buffer,postfix))
+	std::string error;
+	if (!cpu->initExpression(Buffer,postfix,error))
 		return false;
 
 	u64 value;
-	if (!cpu->parseExpression(postfix,value))
+	if (!cpu->parseExpression(postfix,value,error))
 		return false;
 
 	dest = (int) value;
@@ -587,7 +577,7 @@ bool CMipsInstruction::LoadEncoding(const tMipsOpcode& SourceOpcode, const char*
 
 	while (*Line == ' ' || *Line == '\t') Line++;
 	if (*Line != 0)	return false;	// there's something else, bad
-	
+
 	// opcode is ok - now set all flags
 	Opcode = SourceOpcode;
 	immediate.value = immediate.originalValue;
@@ -601,13 +591,13 @@ void CMipsInstruction::setOmittedRegisters()
 	// copy over omitted registers
 	if (Opcode.flags & MO_RSD)
 		registers.grd = registers.grs;
-	
+
 	if (Opcode.flags & MO_RST)
 		registers.grt = registers.grs;
-	
+
 	if (Opcode.flags & MO_RDT)
 		registers.grt = registers.grd;
-	
+
 	if (Opcode.flags & MO_FRSD)
 		registers.frd = registers.frs;
 }
@@ -641,7 +631,7 @@ bool CMipsInstruction::Validate()
 	if (immediateType != MIPS_NOIMMEDIATE)
 	{
 		immediate.originalValue = immediate.value;
-		
+
 		if (Opcode.flags & MO_IMMALIGNED)	// immediate must be aligned
 		{
 			if (immediate.value % 4)
@@ -657,7 +647,7 @@ bool CMipsInstruction::Validate()
 		} else if (Opcode.flags & MO_IPCR)	// relative 16 bit value
 		{
 			int num = (immediate.value-RamPos-4);
-			
+
 			if (num > 0x20000 || num < (-0x20000))
 			{
 				Logger::queueError(Logger::Error,L"Branch target %08X out of range",immediate.value);
@@ -665,7 +655,7 @@ bool CMipsInstruction::Validate()
 			}
 			immediate.value = num >> 2;
 		}
-		
+
 		int immediateBits = getImmediateBits(immediateType);
 		unsigned int mask = (0xFFFFFFFF << (32-immediateBits)) >> (32-immediateBits);
 		int digits = (immediateBits+3) / 4;
@@ -678,7 +668,7 @@ bool CMipsInstruction::Validate()
 
 		immediate.value &= mask;
 	}
-	
+
 	return true;
 }
 
@@ -689,11 +679,11 @@ void CMipsInstruction::encodeNormal()
 	if (registers.grs.num != -1) encoding |= MIPS_RS(registers.grs.num);	// source reg
 	if (registers.grt.num != -1) encoding |= MIPS_RT(registers.grt.num);	// target reg
 	if (registers.grd.num != -1) encoding |= MIPS_RD(registers.grd.num);	// dest reg
-	
+
 	if (registers.frt.num != -1) encoding |= MIPS_FT(registers.frt.num);	// float target reg
 	if (registers.frs.num != -1) encoding |= MIPS_FS(registers.frs.num);	// float source reg
 	if (registers.frd.num != -1) encoding |= MIPS_FD(registers.frd.num);	// float dest reg
-	
+
 	if (registers.ps2vrt.num != -1) encoding |= (registers.ps2vrt.num << 16);	// ps2 vector target reg
 	if (registers.ps2vrs.num != -1) encoding |= (registers.ps2vrs.num << 21);	// ps2 vector source reg
 	if (registers.ps2vrd.num != -1) encoding |= (registers.ps2vrd.num << 6);	// ps2 vector dest reg

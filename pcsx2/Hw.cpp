@@ -1,63 +1,24 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
-
-#include "Hardware.h"
-#include "newVif.h"
 #include "Gif_Unit.h"
+#include "Hardware.h"
 #include "SPU2/spu2.h"
+#include "USB/USB.h"
 
-#include "fmt/core.h"
+#include "common/WrappedMemCopy.h"
+
+#include "fmt/format.h"
 
 using namespace R5900;
 
 const int rdram_devices = 2;	// put 8 for TOOL and 2 for PS2 and PSX
 int rdram_sdevid = 0;
 
-static bool hwInitialized = false;
-
-void hwInit()
-{
-	// [TODO] / FIXME:  PCSX2 no longer works on an Init system.  It assumes that the
-	// static global vars for the process will be initialized when the process is created, and
-	// then issues *resets only* from then on. (reset code for various S2 components should do
-	// NULL checks and allocate memory and such if the pointers are NULL only).
-
-	if( hwInitialized ) return;
-
-	VifUnpackSSE_Init();
-
-	hwInitialized = true;
-}
-
-void hwShutdown()
-{
-	if (!hwInitialized) return;
-
-	VifUnpackSSE_Destroy();
-
-	hwInitialized = false;
-}
-
 void hwReset()
 {
-	hwInit();
-
-	memzero( eeHw );
+	std::memset(eeHw, 0, sizeof(eeHw));
 
 	psHu32(SBUS_F260) = 0x1D000060;
 
@@ -65,20 +26,20 @@ void hwReset()
 	psHu32(DMAC_ENABLEW) = 0x1201;
 	psHu32(DMAC_ENABLER) = 0x1201;
 
+	rcntInit();
+
 	// Sets SPU2 sample rate to PS2 standard (48KHz) whenever emulator is reset.
 	// For PSX mode sample rate setting, see HwWrite.cpp
-	SPU2reset(PS2Modes::PS2);
+	SPU2::Reset(false);
 
 	sifReset();
-
 	gsReset();
 	gifUnit.Reset();
 	ipuReset();
 	vif0Reset();
 	vif1Reset();
 	gif_fifo.init();
-	rcntInit();
-
+	USBreset();
 }
 
 __fi uint intcInterrupt()
@@ -87,7 +48,7 @@ __fi uint intcInterrupt()
 		//DevCon.Warning("*PCSX2*: intcInterrupt already cleared");
 		return 0;
 	}
-	if ((psHu32(INTC_STAT) & psHu32(INTC_MASK)) == 0) 
+	if ((psHu32(INTC_STAT) & psHu32(INTC_MASK)) == 0)
 	{
 		//DevCon.Warning("*PCSX2*: No valid interrupt INTC_MASK: %x INTC_STAT: %x", psHu32(INTC_MASK), psHu32(INTC_STAT));
 		return 0;
@@ -106,13 +67,13 @@ __fi uint intcInterrupt()
 __fi uint dmacInterrupt()
 {
 	if( ((psHu16(DMAC_STAT + 2) & psHu16(DMAC_STAT)) == 0 ) &&
-		( psHu16(DMAC_STAT) & 0x8000) == 0 ) 
+		( psHu16(DMAC_STAT) & 0x8000) == 0 )
 	{
 		//DevCon.Warning("No valid DMAC interrupt MASK %x STAT %x", psHu16(DMAC_STAT+2), psHu16(DMAC_STAT));
 		return 0;
 	}
 
-	if (!dmacRegs.ctrl.DMAE || psHu8(DMAC_ENABLER+2) == 1) 
+	if (!dmacRegs.ctrl.DMAE || psHu8(DMAC_ENABLER+2) == 1)
 	{
 		//DevCon.Warning("DMAC Suspended or Disabled on interrupt");
 		return 0;
@@ -171,15 +132,15 @@ __ri bool hwMFIFOWrite(u32 addr, const u128* data, uint qwc)
 	else
 	{
 		SPR_LOG( "Scratchpad/MFIFO: invalid base physical address: 0x%08x", dmacRegs.rbor.ADDR );
-		pxFailDev( fmt::format( "Scratchpad/MFIFO: Invalid base physical address: 0x{:08x}", u32(dmacRegs.rbor.ADDR)).c_str() );
+		pxFail( fmt::format( "Scratchpad/MFIFO: Invalid base physical address: 0x{:08x}", u32(dmacRegs.rbor.ADDR)).c_str() );
 		return false;
 	}
-	
+
 	return true;
 }
 
 __ri void hwMFIFOResume(u32 transferred) {
-	
+
 	if (transferred == 0)
 	{
 		return; //Nothing got put in the MFIFO, we don't care
@@ -203,7 +164,7 @@ __ri void hwMFIFOResume(u32 transferred) {
 
 				//Apparently this is bad, i guess so, the data is going to memory rather than the FIFO
 				//vif1Regs.stat.FQC = 0x10; // FQC=16
-			}			
+			}
 			break;
 		}
 		case MFD_GIF:
@@ -332,11 +293,11 @@ liked this.
 
 From what i've deduced, REFE does in fact increment, but END doesn't, after much testing, i've concluded this is how
 we can standardize DMA chains, so i've modified the code to work like this.   The below function controls the increment
-of the TADR along with the MADR on VIF, GIF and SPR1 when using the CNT tag, the others don't use it yet, but they 
+of the TADR along with the MADR on VIF, GIF and SPR1 when using the CNT tag, the others don't use it yet, but they
 can probably be modified to do so now.
 
-Reason for this:- Many games  (such as clock tower 3 and FFX Videos) watched the TADR to see when a transfer has finished, 
-so we need to simulate this wherever we can!  Even the FFX video gets corruption and tries to fire multiple DMA Kicks 
+Reason for this:- Many games  (such as clock tower 3 and FFX Videos) watched the TADR to see when a transfer has finished,
+so we need to simulate this wherever we can!  Even the FFX video gets corruption and tries to fire multiple DMA Kicks
 if this doesnt happen, which was the reasoning for the hacked up SPR timing we had, that is no longer required.
 
 -Refraction
@@ -347,7 +308,7 @@ void hwDmacSrcTadrInc(DMACh& dma)
 	//Don't touch it if in normal/interleave mode.
 	if (dma.chcr.STR == 0) return;
 	if (dma.chcr.MOD != 1) return;
-		
+
 	u16 tagid = (dma.chcr.TAG >> 12) & 0x7;
 
 	if (tagid == TAG_CNT)

@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 #include <vector>
@@ -31,11 +19,11 @@ namespace PacketReader::IP::UDP::DHCP
 		u32 transactionID; //xid
 		u16 seconds;
 		u16 flags;
-		IP_Address clientIP{0};
-		IP_Address yourIP{0};
-		IP_Address serverIP{0};
-		IP_Address gatewayIP{0};
-		u8 clientHardwareAddress[16]{0}; //always 16 bytes, regardless of HardwareAddressLength
+		IP_Address clientIP{};
+		IP_Address yourIP{};
+		IP_Address serverIP{};
+		IP_Address gatewayIP{};
+		u8 clientHardwareAddress[16]{}; //always 16 bytes, regardless of HardwareAddressLength
 		//192 bytes of padding
 		u32 magicCookie;
 		//Assumes ownership of ptrs assigned to it
@@ -45,7 +33,7 @@ namespace PacketReader::IP::UDP::DHCP
 		int maxLength = 576;
 
 		DHCP_Packet() {}
-		DHCP_Packet(u8* buffer, int bufferSize);
+		DHCP_Packet(const u8* buffer, int bufferSize);
 		DHCP_Packet(const DHCP_Packet&);
 
 		virtual int GetLength();

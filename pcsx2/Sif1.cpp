@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #define _PC_	// disables MIPS opcode macros.
 
@@ -128,7 +114,7 @@ static __fi bool SIFIOPReadTag()
 	// Only use the first 24 bits.
 	hw_dma10.madr = sif1data & 0xffffff;
 
-	
+
 	if (sif1words > 0xFFFFC) DevCon.Warning("SIF1 Overrun %x", sif1words);
 	//Maximum transfer amount 1mb-16 also masking out top part which is a "Mode" cache stuff, we don't care :)
 	sif1.iop.counter = sif1words & 0xFFFFC;
@@ -154,7 +140,7 @@ static __fi void EndEE()
 		sif1.ee.cycles = 1;
 	}
 
-
+	CPU_SET_DMASTALL(DMAC_SIF1, false);
 	CPU_INT(DMAC_SIF1, /*std::min((int)(*/sif1.ee.cycles*BIAS/*), 384)*/);
 }
 
@@ -225,6 +211,7 @@ static __fi void HandleEETransfer()
 				{
 					hwDmacIrq(DMAC_STALL_SIS);
 					sif1_dma_stall = true;
+					CPU_SET_DMASTALL(DMAC_SIF1, true);
 					return;
 				}
 			}
@@ -341,14 +328,14 @@ __fi void dmaSIF1()
 	psHu32(SBUS_F240) |= 0x4000;
 	sif1.ee.busy = true;
 
-
-	// Okay, this here is needed currently (r3644). 
+	CPU_SET_DMASTALL(DMAC_SIF1, false);
+	// Okay, this here is needed currently (r3644).
 	// FFX battles in the thunder plains map die otherwise, Phantasy Star 4 as well
 	// These 2 games could be made playable again by increasing the time the EE or the IOP run,
 	// showing that this is very timing sensible.
 	// Doing this DMA unfortunately brings back an old warning in Legend of Legaia though, but it still works.
 
-	//Updated 23/08/2011: The hangs are caused by the EE suspending SIF1 DMA and restarting it when in the middle 
+	//Updated 23/08/2011: The hangs are caused by the EE suspending SIF1 DMA and restarting it when in the middle
 	//of processing a "REFE" tag, so the hangs can be solved by forcing the ee.end to be false
 	// (as it should always be at the beginning of a DMA).  using "if iop is busy" flags breaks Tom Clancy Rainbow Six.
 	// Legend of Legaia doesn't throw a warning either :)
@@ -360,7 +347,7 @@ __fi void dmaSIF1()
 		{
 			sif1.ee.end = true;
 		}
-	}	
+	}
 
 	SIF1Dma();
 

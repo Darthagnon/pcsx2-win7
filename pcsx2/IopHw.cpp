@@ -1,33 +1,16 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-
-#include "PrecompiledHeader.h"
-#include "R3000A.h"
 #include "Common.h"
-
-#include "iR5900.h"
-#include "Sio.h"
-#include "Mdec.h"
-#include "IopSio2.h"
-#include "IopCounters.h"
-#include "IopHw.h"
-#include "IopDma.h"
-#include "CDVD/Ps1CD.h"
+#include "SIO/Sio2.h"
+#include "SIO/Sio0.h"
 #include "CDVD/CDVD.h"
-
+#include "CDVD/Ps1CD.h"
+#include "IopCounters.h"
+#include "IopDma.h"
+#include "IopHw.h"
+#include "Mdec.h"
+#include "R3000A.h"
 
 // NOTE: Any modifications to read/write fns should also go into their const counterparts
 // found in iPsxHw.cpp.
@@ -42,8 +25,6 @@ void psxHwReset() {
 	cdrReset();
 	cdvdReset();
 	psxRcntInit();
-	sioInit();
-	//sio2Reset();
 }
 
 __fi u8 psxHw4Read8(u32 add)

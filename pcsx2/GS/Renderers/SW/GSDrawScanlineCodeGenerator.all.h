@@ -1,22 +1,11 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
 #include "GSScanlineEnvironment.h"
 #include "GSNewCodeGenerator.h"
+#include "GS/MultiISA.h"
 
 #undef _t // Conflict with wx, hopefully no one needs this
 
@@ -30,14 +19,11 @@
 	#define DRAW_SCANLINE_USING_YMM 0
 #endif
 
-class GSDrawScanlineCodeGenerator2 : public GSNewCodeGenerator
-{
-	using _parent = GSNewCodeGenerator;
-	using XYm = DRAW_SCANLINE_VECTOR_REGISTER;
+MULTI_ISA_UNSHARED_START
 
-	/// On x86-64 we reserve a bunch of GPRs for holding addresses of locals that would otherwise be hard to reach
-	/// On x86-32 the same values are just raw 32-bit addresses
-	using LocalAddr = Choose3264<size_t, AddressReg>::type;
+class GSDrawScanlineCodeGenerator : public GSNewCodeGenerator
+{
+	using XYm = DRAW_SCANLINE_VECTOR_REGISTER;
 
 	constexpr static bool isXmm = std::is_same<XYm, Xbyak::Xmm>::value;
 	constexpr static bool isYmm = std::is_same<XYm, Xbyak::Ymm>::value;
@@ -70,33 +56,25 @@ class GSDrawScanlineCodeGenerator2 : public GSNewCodeGenerator
 	constexpr static int _top = _64_top;
 
 	GSScanlineSelector m_sel;
-	GSScanlineLocalData& m_local;
-	bool m_rip;
 	bool use_lod;
 
 	const XYm xym0{0}, xym1{1}, xym2{2}, xym3{3}, xym4{4}, xym5{5}, xym6{6}, xym7{7}, xym8{8}, xym9{9}, xym10{10}, xym11{11}, xym12{12}, xym13{13}, xym14{14}, xym15{15};
 	/// Note: a2 and t3 are only available on x86-64
 	/// Outside of Init, usable registers are a0, t0, t1, t2, t3[x64], rax, rbx, rdx, r10+
 	const AddressReg a0, a1, a2, a3, t0, t1, t2, t3;
-	const LocalAddr _g_const, _m_local, _m_local__gd, _m_local__gd__vm;
+	const AddressReg _m_local, _m_local__gd, _m_local__gd__vm, _m_local__gd__clut;
+	// If use_lod, m_local.gd->tex, else m_local.gd->tex[0]
+	const AddressReg _m_local__gd__tex;
 	/// Available on both x86 and x64, not always valid
 	const XYm _rb, _ga, _fm, _zm, _fd, _test;
 	/// Always valid if needed, x64 only
 	const XYm _z, _f, _s, _t, _q, _f_rb, _f_ga;
 
-	/// Returns the first arg on 32-bit, second on 64-bit
-	static LocalAddr chooseLocal(const void* addr32, AddressReg reg64)
-	{
-		return choose3264((size_t)addr32, reg64);
-	}
-
 public:
-	GSDrawScanlineCodeGenerator2(Xbyak::CodeGenerator* base, CPUInfo cpu, void* param, u64 key);
+	GSDrawScanlineCodeGenerator(u64 key, void* code, size_t maxsize);
 	void Generate();
 
 private:
-	/// Loads the given address into the given register if needed, and returns something that can be used in a `ptr[]`
-	LocalAddr loadAddress(AddressReg reg, const void* addr);
 	/// Broadcast 128 bits of floats from memory to the whole register, whatever size that register might be
 	void broadcastf128(const XYm& reg, const Xbyak::Address& mem);
 	/// Broadcast 128 bits of integers from memory to the whole register, whatever size that register might be
@@ -187,3 +165,5 @@ private:
 		int pixels,      int mip_offset);
 	void ReadTexelImpl(const Xmm& dst, const Xmm& addr, u8 i, bool texInA3, bool preserveDst);
 };
+
+MULTI_ISA_UNSHARED_END

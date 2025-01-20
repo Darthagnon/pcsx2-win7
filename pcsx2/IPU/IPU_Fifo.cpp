@@ -1,23 +1,10 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
-#include "IPU.h"
+#include "IPU/IPU.h"
 #include "IPU/IPUdma.h"
-#include "mpeg2lib/Mpeg.h"
+#include "IPU/IPU_MultiISA.h"
 
 alignas(16) IPU_Fifo ipu_fifo;
 
@@ -27,20 +14,20 @@ void IPU_Fifo::init()
 	out.writepos = 0;
 	in.readpos = 0;
 	in.writepos = 0;
-	memzero(in.data);
-	memzero(out.data);
+	std::memset(in.data, 0, sizeof(in.data));
+	std::memset(out.data, 0, sizeof(out.data));
 }
 
 void IPU_Fifo_Input::clear()
 {
-	memzero(data);
+	std::memset(data, 0, sizeof(data));
 	g_BP.IFC = 0;
 	ipuRegs.ctrl.IFC = 0;
 	readpos = 0;
 	writepos = 0;
 
 	// Because the FIFO is drained it will request more data immediately
-	IPU1Status.DataRequested = true;
+	IPUCoreStatus.DataRequested = true;
 
 	if (ipu1ch.chcr.STR && cpuRegs.eCycle[4] == 0x9999)
 	{
@@ -50,7 +37,7 @@ void IPU_Fifo_Input::clear()
 
 void IPU_Fifo_Output::clear()
 {
-	memzero(data);
+	std::memset(data, 0, sizeof(data));
 	ipuRegs.ctrl.OFC = 0;
 	readpos = 0;
 	writepos = 0;
@@ -64,33 +51,36 @@ void IPU_Fifo::clear()
 
 std::string IPU_Fifo_Input::desc() const
 {
-	return StringUtil::StdStringFromFormat("IPU Fifo Input: readpos = 0x%x, writepos = 0x%x, data = 0x%x", readpos, writepos, data);
+	return StringUtil::StdStringFromFormat("IPU Fifo Input: readpos = 0x%x, writepos = 0x%x, data = %p", readpos, writepos, data);
 }
 
 std::string IPU_Fifo_Output::desc() const
 {
-	return StringUtil::StdStringFromFormat("IPU Fifo Output: readpos = 0x%x, writepos = 0x%x, data = 0x%x", readpos, writepos, data);
+	return StringUtil::StdStringFromFormat("IPU Fifo Output: readpos = 0x%x, writepos = 0x%x, data = %p", readpos, writepos, data);
 }
 
-int IPU_Fifo_Input::write(u32* pMem, int size)
+int IPU_Fifo_Input::write(const u32* pMem, int size)
 {
-	int transsize;
-	int firsttrans = std::min(size, 8 - (int)g_BP.IFC);
+	const int transfer_size = std::min(size, 8 - (int)g_BP.IFC);
+	if (!transfer_size) return 0;
 
-	g_BP.IFC += firsttrans;
-	transsize = firsttrans;
+	const int first_words = std::min((32 - writepos), transfer_size << 2);
+	const int second_words = (transfer_size << 2) - first_words;
 
-	while (transsize-- > 0)
-	{
-		CopyQWC(&data[writepos], pMem);
-		writepos = (writepos + 4) & 31;
-		pMem += 4;
-	}
+	memcpy(&data[writepos], pMem, first_words << 2);
+	pMem += first_words;
+
+	if(second_words)
+		memcpy(&data[0], pMem, second_words << 2);
+
+	writepos = (writepos + (transfer_size << 2)) & 31;
+
+	g_BP.IFC += transfer_size;
 
 	if (g_BP.IFC == 8)
-		IPU1Status.DataRequested = false;
+		IPUCoreStatus.DataRequested = false;
 
-	return firsttrans;
+	return transfer_size;
 }
 
 int IPU_Fifo_Input::read(void *value)
@@ -99,11 +89,11 @@ int IPU_Fifo_Input::read(void *value)
 	if (g_BP.IFC <= 1)
 	{
 		// IPU FIFO is empty and DMA is waiting so lets tell the DMA we are ready to put data in the FIFO
-		IPU1Status.DataRequested = true;
+		IPUCoreStatus.DataRequested = true;
 
 		if(ipu1ch.chcr.STR && cpuRegs.eCycle[4] == 0x9999)
 		{
-			CPU_INT( DMAC_TO_IPU, 4);
+			CPU_INT( DMAC_TO_IPU, std::min(8U, ipu1ch.qwc));
 		}
 
 		if (g_BP.IFC == 0) return 0;
@@ -121,51 +111,52 @@ int IPU_Fifo_Output::write(const u32 *value, uint size)
 {
 	pxAssertMsg(size>0, "Invalid size==0 when calling IPU_Fifo_Output::write");
 
-	uint origsize = size;
-	/*do {*/
-		//IPU0dma();
-	
-		uint transsize = std::min(size, 8 - (uint)ipuRegs.ctrl.OFC);
-		if(!transsize) return 0;
+	const int transfer_size = std::min(size, 8 - (uint)ipuRegs.ctrl.OFC);
+	if(!transfer_size) return 0;
 
-		ipuRegs.ctrl.OFC += transsize;
-		size -= transsize;
-		while (transsize > 0)
-		{
-			CopyQWC(&data[writepos], value);
-			writepos = (writepos + 4) & 31;
-			value += 4;
-			--transsize;
-		}
-	/*} while(true);*/
+	const int first_words = std::min((32 - writepos), transfer_size << 2);
+	const int second_words = (transfer_size << 2) - first_words;
+
+	memcpy(&data[writepos], value, first_words << 2);
+	value += first_words;
+	if (second_words)
+		memcpy(&data[0], value, second_words << 2);
+
+	writepos = (writepos + (transfer_size << 2)) & 31;
+
+	ipuRegs.ctrl.OFC += transfer_size;
+
 	if(ipu0ch.chcr.STR)
-		IPU_INT_FROM(ipuRegs.ctrl.OFC * BIAS);
-	return origsize - size;
+		IPU_INT_FROM(1);
+
+	return transfer_size;
 }
 
 void IPU_Fifo_Output::read(void *value, uint size)
 {
 	pxAssert(ipuRegs.ctrl.OFC >= size);
 	ipuRegs.ctrl.OFC -= size;
-	
+
 	// Zeroing the read data is not needed, since the ringbuffer design will never read back
 	// the zero'd data anyway. --air
 
-	//__m128 zeroreg = _mm_setzero_ps();
-	while (size > 0)
-	{
-		CopyQWC(value, &data[readpos]);
-		//_mm_store_ps((float*)&data[readpos], zeroreg);
+	const int first_words = std::min((32 - readpos), static_cast<int>(size << 2));
+	const int second_words = static_cast<int>(size << 2) - first_words;
 
-		readpos = (readpos + 4) & 31;
-		value = (u128*)value + 1;
-		--size;
-	}
+	memcpy(value, &data[readpos], first_words << 2);
+	value = static_cast<u32*>(value) + first_words;
+
+	if (second_words)
+		memcpy(value, &data[0], second_words << 2);
+
+	readpos = (readpos + static_cast<int>(size << 2)) & 31;
 }
 
 void ReadFIFO_IPUout(mem128_t* out)
 {
-	if (!pxAssertDev( ipuRegs.ctrl.OFC > 0, "Attempted read from IPUout's FIFO, but the FIFO is empty!" )) return;
+	pxAssertMsg(ipuRegs.ctrl.OFC > 0, "Attempted read from IPUout's FIFO, but the FIFO is empty!");
+	if (ipuRegs.ctrl.OFC == 0) [[unlikely]]
+		return;
 	ipu_fifo.out.read(out, 1);
 
 	// Games should always check the fifo before reading from it -- so if the FIFO has no data
@@ -177,12 +168,13 @@ void WriteFIFO_IPUin(const mem128_t* value)
 	IPU_LOG( "WriteFIFO/IPUin <- 0x%08X.%08X.%08X.%08X", value->_u32[0], value->_u32[1], value->_u32[2], value->_u32[3]);
 
 	//committing every 16 bytes
-	if( ipu_fifo.in.write((u32*)value, 1) == 0 )
+	if( ipu_fifo.in.write(value->_u32, 1) > 0 )
 	{
-		if (ipuRegs.ctrl.BUSY && !CommandExecuteQueued)
+		if (ipuRegs.ctrl.BUSY /*&& IPUCoreStatus.WaitingOnIPUTo*/)
 		{
-			CommandExecuteQueued = true;
-			CPU_INT(IPU_PROCESS, 1 * BIAS);
+			IPUCoreStatus.WaitingOnIPUFrom = false;
+			IPUCoreStatus.WaitingOnIPUTo = false;
+			IPU_INT_PROCESS(2 * BIAS);
 		}
 	}
 }

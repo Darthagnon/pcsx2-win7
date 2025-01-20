@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #include "ARP_Packet.h"
 #include "DEV9/PacketReader/NetLib.h"
@@ -30,7 +16,7 @@ namespace PacketReader::ARP
 	{
 	}
 
-	ARP_Packet::ARP_Packet(u8* buffer, int bufferSize)
+	ARP_Packet::ARP_Packet(const u8* buffer, int bufferSize)
 	{
 		int offset = 0;
 
@@ -66,7 +52,7 @@ namespace PacketReader::ARP
 		, senderProtocolAddress{std::make_unique<u8[]>(original.protocolAddressLength)}
 		, targetHardwareAddress{std::make_unique<u8[]>(original.hardwareAddressLength)}
 		, targetProtocolAddress{std::make_unique<u8[]>(original.protocolAddressLength)}
-	{	
+	{
 		memcpy(senderHardwareAddress.get(), original.senderHardwareAddress.get(), hardwareAddressLength);
 		memcpy(senderProtocolAddress.get(), original.senderProtocolAddress.get(), protocolAddressLength);
 		memcpy(targetHardwareAddress.get(), original.targetHardwareAddress.get(), hardwareAddressLength);

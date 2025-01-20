@@ -1,4 +1,5 @@
-#ifdef SHADER_MODEL // make safe to include in resource file to enforce dependency
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 Texture2D Texture;
 SamplerState Sampler;
@@ -49,5 +50,3 @@ float4 ps_main(PS_INPUT input) : SV_Target0
 	float4 c = Texture.Sample(Sampler, input.t);
 	return ContrastSaturationBrightness(c);
 }
-
-#endif

@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 /*
  * ix86 core v0.9.1
@@ -29,7 +17,6 @@
  */
 
 #include "common/emitter/internal.h"
-#include "common/emitter/tools.h"
 #include <functional>
 
 // ------------------------------------------------------------------------
@@ -120,6 +107,16 @@ const xRegisterSSE
     xmm12(12), xmm13(13),
     xmm14(14), xmm15(15);
 
+const xRegisterSSE
+    ymm0(0, xRegisterYMMTag()), ymm1(1, xRegisterYMMTag()),
+    ymm2(2, xRegisterYMMTag()), ymm3(3, xRegisterYMMTag()),
+    ymm4(4, xRegisterYMMTag()), ymm5(5, xRegisterYMMTag()),
+    ymm6(6, xRegisterYMMTag()), ymm7(7, xRegisterYMMTag()),
+    ymm8(8, xRegisterYMMTag()), ymm9(9, xRegisterYMMTag()),
+    ymm10(10, xRegisterYMMTag()), ymm11(11, xRegisterYMMTag()),
+    ymm12(12, xRegisterYMMTag()), ymm13(13, xRegisterYMMTag()),
+    ymm14(14, xRegisterYMMTag()), ymm15(15, xRegisterYMMTag());
+
 const xAddressReg
     rax(0), rbx(3),
     rcx(1), rdx(2),
@@ -150,7 +147,13 @@ const xRegister8
     al(0),
     dl(2), bl(3),
     ah(4), ch(5),
-    dh(6), bh(7);
+    dh(6), bh(7),
+    spl(4, true), bpl(5, true),
+    sil(6, true), dil(7, true),
+    r8b(8), r9b(9),
+    r10b(10), r11b(11),
+    r12b(12), r13b(13),
+    r14b(14), r15b(15);
 
 #if defined(_WIN32)
 const xAddressReg
@@ -301,7 +304,7 @@ const xRegister32
 		}
 		else
 		{
-			pxAssertDev(displacement == (s32)displacement, "SIB target is too far away, needs an indirect register");
+			pxAssertMsg(displacement == (s32)displacement, "SIB target is too far away, needs an indirect register");
 			ModRM(0, regfield, ModRm_UseSib);
 			SibSB(0, Sib_EIZ, Sib_UseDisp32);
 		}
@@ -341,7 +344,7 @@ const xRegister32
 	{
 		// 3 bits also on x86_64 (so max is 8)
 		// We might need to mask it on x86_64
-		pxAssertDev(regfield < 8, "Invalid x86 register identifier.");
+		pxAssertMsg(regfield < 8, "Invalid x86 register identifier.");
 		int displacement_size = (info.Displacement == 0) ? 0 :
                                                            ((info.IsByteSizeDisp()) ? 1 : 2);
 
@@ -426,10 +429,10 @@ const xRegister32
 	}
 
 	//////////////////////////////////////////////////////////////////////////////////////////
-	__emitinline static void EmitRex(bool w, bool r, bool x, bool b)
+	__emitinline static void EmitRex(bool w, bool r, bool x, bool b, bool ext8bit = false)
 	{
 		const u8 rex = 0x40 | (w << 3) | (r << 2) | (x << 1) | (u8)b;
-		if (rex != 0x40)
+		if (rex != 0x40 || ext8bit)
 			xWrite8(rex);
 	}
 
@@ -463,16 +466,16 @@ const xRegister32
 		bool r = false;
 		bool x = false;
 		bool b = reg2.IsExtended();
-		EmitRex(w, r, x, b);
+		EmitRex(w, r, x, b, reg2.IsExtended8Bit());
 	}
 
 	void EmitRex(const xRegisterBase& reg1, const xRegisterBase& reg2)
 	{
-		bool w = reg1.IsWide();
+		bool w = reg1.IsWide() || reg2.IsWide();
 		bool r = reg1.IsExtended();
 		bool x = false;
 		bool b = reg2.IsExtended();
-		EmitRex(w, r, x, b);
+		EmitRex(w, r, x, b, reg2.IsExtended8Bit());
 	}
 
 	void EmitRex(const xRegisterBase& reg1, const void* src)
@@ -482,12 +485,12 @@ const xRegister32
 		bool r = reg1.IsExtended();
 		bool x = false;
 		bool b = false; // FIXME src.IsExtended();
-		EmitRex(w, r, x, b);
+		EmitRex(w, r, x, b, reg1.IsExtended8Bit());
 	}
 
 	void EmitRex(const xRegisterBase& reg1, const xIndirectVoid& sib)
 	{
-		bool w = reg1.IsWide();
+		bool w = reg1.IsWide() || sib.IsWide();
 		bool r = reg1.IsExtended();
 		bool x = sib.Index.IsExtended();
 		bool b = sib.Base.IsExtended();
@@ -496,7 +499,7 @@ const xRegister32
 			b = x;
 			x = false;
 		}
-		EmitRex(w, r, x, b);
+		EmitRex(w, r, x, b, reg1.IsExtended8Bit());
 	}
 
 	// For use by instructions that are implicitly wide
@@ -559,7 +562,7 @@ const xRegister32
 		// Core2/i7 CPUs prefer unaligned addresses.  Checking for SSSE3 is a decent filter.
 		// (also align in debug modes for disasm convenience)
 
-		if (IsDebugBuild || !x86caps.hasSupplementalStreamingSIMD3Extensions)
+		if constexpr (IsDebugBuild)
 		{
 			// - P4's and earlier prefer 16 byte alignment.
 			// - AMD Athlons and Phenoms prefer 8 byte alignment, but I don't have an easy
@@ -698,7 +701,7 @@ const xRegister32
 				Factor++;
 			else
 			{
-				pxAssertDev(Index.IsEmpty(), "x86Emitter: Only one scaled index register is allowed in an address modifier.");
+				pxAssertMsg(Index.IsEmpty(), "x86Emitter: Only one scaled index register is allowed in an address modifier.");
 				Index = src;
 				Factor = 2;
 			}
@@ -708,7 +711,7 @@ const xRegister32
 		else if (Index.IsEmpty())
 			Index = src;
 		else
-			pxAssumeDev(false, "x86Emitter: address modifiers cannot have more than two index registers."); // oops, only 2 regs allowed per ModRm!
+			pxAssumeMsg(false, "x86Emitter: address modifiers cannot have more than two index registers."); // oops, only 2 regs allowed per ModRm!
 
 		return *this;
 	}
@@ -733,7 +736,7 @@ const xRegister32
 			Factor += src.Factor;
 		}
 		else
-			pxAssumeDev(false, "x86Emitter: address modifiers cannot have more than two index registers."); // oops, only 2 regs allowed per ModRm!
+			pxAssumeMsg(false, "x86Emitter: address modifiers cannot have more than two index registers."); // oops, only 2 regs allowed per ModRm!
 
 		return *this;
 	}
@@ -820,7 +823,7 @@ const xRegister32
 				break;
 
 			case 3: // becomes [reg*2+reg]
-				pxAssertDev(Base.IsEmpty(), "Cannot scale an Index register by 3 when Base is not empty!");
+				pxAssertMsg(Base.IsEmpty(), "Cannot scale an Index register by 3 when Base is not empty!");
 				Base = Index;
 				Scale = 1;
 				break;
@@ -830,24 +833,24 @@ const xRegister32
 				break;
 
 			case 5: // becomes [reg*4+reg]
-				pxAssertDev(Base.IsEmpty(), "Cannot scale an Index register by 5 when Base is not empty!");
+				pxAssertMsg(Base.IsEmpty(), "Cannot scale an Index register by 5 when Base is not empty!");
 				Base = Index;
 				Scale = 2;
 				break;
 
 			case 6: // invalid!
-				pxAssumeDev(false, "x86 asm cannot scale a register by 6.");
+				pxAssumeMsg(false, "x86 asm cannot scale a register by 6.");
 				break;
 
 			case 7: // so invalid!
-				pxAssumeDev(false, "x86 asm cannot scale a register by 7.");
+				pxAssumeMsg(false, "x86 asm cannot scale a register by 7.");
 				break;
 
 			case 8:
 				Scale = 3;
 				break;
 			case 9: // becomes [reg*8+reg]
-				pxAssertDev(Base.IsEmpty(), "Cannot scale an Index register by 9 when Base is not empty!");
+				pxAssertMsg(Base.IsEmpty(), "Cannot scale an Index register by 9 when Base is not empty!");
 				Base = Index;
 				Scale = 3;
 				break;
@@ -1221,22 +1224,35 @@ const xRegister32
 #ifdef _WIN32
 		xPUSH(rdi);
 		xPUSH(rsi);
-		xSUB(rsp, 32); // Windows calling convention specifies additional space for the callee to spill registers
-		m_offset += 48;
-#endif
+		m_offset += 16;
 
+		// Align for movaps, in addition to any following instructions
 		stackAlign(m_offset, true);
+
+		xSUB(rsp, 16 * 10);
+		for (u32 i = 6; i < 16; i++)
+			xMOVAPS(ptr128[rsp + (i - 6) * 16], xRegisterSSE(i));
+		xSUB(rsp, 32); // Windows calling convention specifies additional space for the callee to spill registers
+#else
+		// Align for any following instructions
+		stackAlign(m_offset, true);
+#endif
 	}
 
 	xScopedStackFrame::~xScopedStackFrame()
 	{
-		stackAlign(m_offset, false);
-
 		// Restore the register context
 #ifdef _WIN32
 		xADD(rsp, 32);
+		for (u32 i = 6; i < 16; i++)
+			xMOVAPS(xRegisterSSE::GetInstance(i), ptr[rsp + (i - 6) * 16]);
+		xADD(rsp, 16 * 10);
+
+		stackAlign(m_offset, false);
 		xPOP(rsi);
 		xPOP(rdi);
+#else
+		stackAlign(m_offset, false);
 #endif
 		xPOP(r15);
 		xPOP(r14);

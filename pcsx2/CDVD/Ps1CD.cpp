@@ -1,19 +1,6 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "R3000A.h"
 #include "Common.h"
 
@@ -21,6 +8,8 @@
 #include "CDVD.h"
 #include "IopHw.h"
 #include "IopDma.h"
+
+#include "common/Threading.h"
 
 //THIS ALL IS FOR THE CDROM REGISTERS HANDLING
 
@@ -131,10 +120,13 @@ uint sectorSeekReadDelay = 0x800;           // for calculated seek delays
 
 static void AddIrqQueue(u8 irq, u32 ecycle);
 
+#if 0
+// Unused
 static __fi int GetCDSpeed()
 {
 	return 1 + ((cdr.Mode >> 7) & 0x1);
 }
+#endif
 
 static __fi void StartReading(u32 type)
 {
@@ -588,7 +580,7 @@ void cdrReadInterrupt()
 	if (cdr.RErr == -1)
 	{
 		DevCon.Warning("CD err");
-		memzero(cdr.Transfer);
+		std::memset(cdr.Transfer, 0, sizeof(cdr.Transfer));
 		cdr.Stat = DiskError;
 		cdr.StatP |= STATUS_ERROR;
 		cdr.Result[0] = cdr.StatP;
@@ -870,7 +862,7 @@ void cdrWrite1(u8 rt)
 			if (cdr.Mode & MODE_CDDA)
 			{
 				StopCdda();
-				cdvd.Type = CDVD_TYPE_PSCDDA;
+				cdvd.DiscType = CDVD_TYPE_PSCDDA;
 			}
 
 			setPs1CDVDSpeed(cdvd.Speed);
@@ -1104,15 +1096,18 @@ void psxDma3(u32 madr, u32 bcr, u32 chcr)
 
 void cdrReset()
 {
-	memzero(cdr);
+	std::memset(&cdr, 0, sizeof(cdr));
 	cdr.CurTrack = 1;
 	cdr.File = 1;
 	cdr.Channel = 1;
 	cdReadTime = (PSXCLK / 1757) * BIAS;
 }
 
-void SaveStateBase::cdrFreeze()
+bool SaveStateBase::cdrFreeze()
 {
-	FreezeTag("cdrom");
+	if (!FreezeTag("cdrom"))
+		return false;
+
 	Freeze(cdr);
+	return IsOkay();
 }

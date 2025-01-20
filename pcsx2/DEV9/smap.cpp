@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
@@ -70,7 +56,7 @@ bool rx_fifo_can_rx()
 		return false;
 
 	//Check if there is space on fifo
-	int rd_ptr = dev9Ru32(SMAP_R_RXFIFO_RD_PTR);
+	const int rd_ptr = dev9Ru32(SMAP_R_RXFIFO_RD_PTR);
 	int space = sizeof(dev9.rxfifo) -
 				((dev9.rxfifo_wr_ptr - rd_ptr) & 16383);
 
@@ -89,7 +75,7 @@ void rx_process(NetPacket* pk)
 {
 	smap_bd_t* pbd = ((smap_bd_t*)&dev9.dev9R[SMAP_BD_RX_BASE & 0xffff]) + dev9.rxbdi;
 
-	int bytes = (pk->size + 3) & (~3);
+	const int bytes = (pk->size + 3) & (~3);
 
 	if (!(pbd->ctrl_stat & SMAP_BD_RX_EMPTY))
 	{
@@ -97,7 +83,7 @@ void rx_process(NetPacket* pk)
 		return;
 	}
 
-	int pstart = (dev9.rxfifo_wr_ptr) & 16383;
+	const int pstart = (dev9.rxfifo_wr_ptr) & 16383;
 	int i = 0;
 	while (i < bytes)
 	{
@@ -133,19 +119,18 @@ u32 wswap(u32 d)
 
 void tx_process()
 {
-	//we loop based on count ? or just *use* it ?
-	u32 cnt = dev9Ru8(SMAP_R_TXFIFO_FRAME_CNT);
-	//spams// printf("tx_process : %u cnt frames !\n",cnt);
-
 	NetPacket pk;
-	u32 fc = 0;
-	for (fc = 0; fc < cnt; fc++)
+	// We will loop though TX_BD, sending any that are ready
+	// stopping once we reach one that isn't ready
+	// SMAP_R_TXFIFO_FRAME_CNT is decremented, but otherwise isn't used
+	// This seems to match HW behaviour
+	u32 cnt = 0;
+	while (true)
 	{
 		smap_bd_t* pbd = ((smap_bd_t*)&dev9.dev9R[SMAP_BD_TX_BASE & 0xffff]) + dev9.txbdi;
 
 		if (!(pbd->ctrl_stat & SMAP_BD_TX_READY))
 		{
-			Console.Error("DEV9: SMAP: ERROR : !pbd->ctrl_stat&SMAP_BD_TX_READY");
 			break;
 		}
 		if (pbd->length & 3)
@@ -159,7 +144,7 @@ void tx_process()
 		}
 		else
 		{
-			u32 base = (pbd->pointer - 0x1000) & 16383;
+			const u32 base = (pbd->pointer - 0x1000) & 16383;
 			DevCon.WriteLn("DEV9: Sending Packet from base %x, size %d", base, pbd->length);
 
 			pk.size = pbd->length;
@@ -168,6 +153,30 @@ void tx_process()
 			{
 				Console.Error("DEV9: SMAP: ERROR: odd , !pbd->pointer>0x1000 | 0x%X %u", pbd->pointer, pbd->length);
 			}
+
+			// SMAP drivers send a very specfic frame during init, then check SPD_R_INTR_STAT for SMAP_INTR_RXEND | SMAP_INTR_TXEND | SMAP_INTR_TXDNV.
+			// SMAP_INTR_TXEND is set normally, SMAP_INTR_RXEND is supposed to be set here, but we currently don't emulate that.
+			// SMAP_INTR_TXDNV is set somewhere, unsure where, we only set it in failure (instead of SMAP_INTR_TXEND), but is included in the hack here.
+			if (pbd->length == 0x5EA && pbd->pointer == 0x1000)
+			{
+				u32* ptr = (u32*)&dev9.txfifo[base];
+
+				bool test = true;
+				for (u32 i = 0; i < 0x5EA; i += 4)
+				{
+					if (*ptr++ != i)
+					{
+						test = false;
+						break;
+					}
+				}
+				if (test)
+				{
+					Console.WriteLn("DEV9: Adapter Detection Hack - Resetting RX/TX");
+					_DEV9irq(SMAP_INTR_RXEND | SMAP_INTR_TXDNV, 100);
+				}
+			}
+
 			//increase fifo pointer(s)
 			//uh does that even exist on real h/w ?
 			/*
@@ -194,8 +203,8 @@ void tx_process()
 				if (dev9.txfifo_rd_ptr==16384)
 					dev9.txfifo_rd_ptr=0;
 			}
-			
-			
+
+
 
 			if (dev9.txfifo_rd_ptr&(~16383))
 			{
@@ -226,18 +235,19 @@ void tx_process()
 
 		//decrease frame count -- this is not thread safe
 		dev9Ru8(SMAP_R_TXFIFO_FRAME_CNT)--;
+		cnt++;
 	}
 
-	//spams// emu_printf("processed %u frames, %u count, cnt = %u\n",fc,dev9Ru8(SMAP_R_TXFIFO_FRAME_CNT),cnt);
-	//if some error/early exit signal TXDNV
-	if (fc != cnt || cnt == 0)
+	// if we actualy send something set TXEND
+	if (cnt != 0)
 	{
-		Console.Error("DEV9: SMAP: WARN : (fc!=cnt || cnt==0) but packet send request was made oO..");
+		_DEV9irq(SMAP_INTR_TXEND, 100); //now ? or when the fifo is empty ? i guess now atm
+	}
+	else
+	{
+		Console.Error("DEV9: SMAP: WARN : Current BD_TX was not ready, but packet send request was made");
 		_DEV9irq(SMAP_INTR_TXDNV, 0);
 	}
-	//if we actualy send something send TXEND
-	if (fc != 0)
-		_DEV9irq(SMAP_INTR_TXEND, 100); //now ? or when the fifo is empty ? i guess now atm
 }
 
 
@@ -264,12 +274,6 @@ void emac3_write(u32 addr)
 			break;
 		case SMAP_R_EMAC3_TxMODE1_L:
 			//DevCon.WriteLn("DEV9: SMAP_R_EMAC3_TxMODE1_L 32bit write %x", value);
-			if (value == 0x380f0000)
-			{
-				Console.WriteLn("DEV9: Adapter Detection Hack - Resetting RX/TX");
-				ad_reset();
-				_DEV9irq(SMAP_INTR_RXEND | SMAP_INTR_TXEND | SMAP_INTR_TXDNV, 5);
-			}
 			break;
 		case SMAP_R_EMAC3_STA_CTRL_L:
 			//DevCon.WriteLn("DEV9: SMAP: SMAP_R_EMAC3_STA_CTRL write %x", value);
@@ -277,7 +281,7 @@ void emac3_write(u32 addr)
 				if (value & (SMAP_E3_PHY_READ))
 				{
 					value |= SMAP_E3_PHY_OP_COMP;
-					int reg = value & (SMAP_E3_PHY_REG_ADDR_MSK);
+					const int reg = value & (SMAP_E3_PHY_REG_ADDR_MSK);
 					u16 val = dev9.phyregs[reg];
 					switch (reg)
 					{
@@ -298,12 +302,14 @@ void emac3_write(u32 addr)
 					value |= SMAP_E3_PHY_OP_COMP;
 					int reg = value & (SMAP_E3_PHY_REG_ADDR_MSK);
 					u16 val = value >> 16;
-					switch (reg)
+					if (reg == SMAP_DsPHYTER_BMCR)
 					{
-						case SMAP_DsPHYTER_BMCR:
-							val &= ~SMAP_PHY_BMCR_RST;
-							val |= 0x1;
-							break;
+						if (val & SMAP_PHY_BMCR_RST)
+						{
+							ad_reset();
+						}
+						val &= ~SMAP_PHY_BMCR_RST;
+						val |= 0x1;
 					}
 					//DevCon.WriteLn("DEV9: phy_write %d: %x", reg, val);
 					dev9.phyregs[reg] = val;
@@ -342,7 +348,7 @@ u8 smap_read8(u32 addr)
 
 u16 smap_read16(u32 addr)
 {
-	int rv = dev9Ru16(addr);
+	const int rv = dev9Ru16(addr);
 	if (addr >= SMAP_BD_TX_BASE && addr < (SMAP_BD_TX_BASE + SMAP_BD_SIZE))
 	{
 		if (dev9.bd_swap)
@@ -497,8 +503,8 @@ u32 smap_read32(u32 addr)
 {
 	if (addr >= SMAP_EMAC3_REGBASE && addr < SMAP_EMAC3_REGEND)
 	{
-		u32 hi = smap_read16(addr);
-		u32 lo = smap_read16(addr + 2) << 16;
+		const u32 hi = smap_read16(addr);
+		const u32 lo = smap_read16(addr + 2) << 16;
 		return hi | lo;
 	}
 	switch (addr)
@@ -517,7 +523,7 @@ u32 smap_read32(u32 addr)
 		{
 			int rd_ptr = dev9Ru32(SMAP_R_RXFIFO_RD_PTR) & 16383;
 
-			int rv = *((u32*)(dev9.rxfifo + rd_ptr));
+			const int rv = *((u32*)(dev9.rxfifo + rd_ptr));
 
 			dev9Ru32(SMAP_R_RXFIFO_RD_PTR) = ((rd_ptr + 4) & 16383);
 
@@ -571,15 +577,12 @@ void smap_write8(u32 addr, u8 value)
 			//DevCon.WriteLn("DEV9: SMAP_R_RXFIFO_CTRL 8bit write %x", value);
 			if (value & SMAP_RXFIFO_RESET)
 			{
-				reset_lock.lock(); //lock reset mutex 1st
-				counter_lock.lock();
+				std::scoped_lock lock(reset_lock, counter_lock);
 				dev9.rxbdi = 0;
 				dev9.rxfifo_wr_ptr = 0;
 				dev9Ru8(SMAP_R_RXFIFO_FRAME_CNT) = 0;
 				dev9Ru32(SMAP_R_RXFIFO_RD_PTR) = 0;
 				dev9Ru32(SMAP_R_RXFIFO_SIZE) = 16384;
-				reset_lock.unlock();
-				counter_lock.unlock();
 			}
 			value &= ~SMAP_RXFIFO_RESET;
 			dev9Ru8(addr) = value;
@@ -612,7 +615,7 @@ void smap_write16(u32 addr, u16 value)
 			value = (value >> 8) | (value << 8);
 		dev9Ru16(addr) = value;
 		/*
-		switch (addr & 0x7) 
+		switch (addr & 0x7)
 		{
 		case 0: // ctrl_stat
 			DevCon.WriteLn("DEV9: TX_CTRL_STAT[%d]: write %x", (addr - SMAP_BD_TX_BASE) / 8, value);
@@ -642,7 +645,7 @@ void smap_write16(u32 addr, u16 value)
 			value = (value >> 8) | (value << 8);
 		dev9Ru16(addr) = value;
 		/*
-		switch (addr & 0x7) 
+		switch (addr & 0x7)
 		{
 		case 0: // ctrl_stat
 			DevCon.WriteLn("DEV9: RX_CTRL_STAT[%d]: write %x", rx_index, value);
@@ -772,7 +775,7 @@ void smap_write16(u32 addr, u16 value)
 		emu_printf("SMAP: SMAP_R_EMAC3_TxMODE0_H 16bit write %x\n", value);
 		dev9Ru16(addr) = value;
 		return;
-	
+
 	case SMAP_R_EMAC3_TxMODE1_H:
 		emu_printf("SMAP: SMAP_R_EMAC3_TxMODE1_H 16bit write %x\n", value);
 		dev9Ru16(addr) = value;

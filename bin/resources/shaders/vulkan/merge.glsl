@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
+
 #ifdef VERTEX_SHADER
 
 layout(location = 0) in vec4 a_pos;

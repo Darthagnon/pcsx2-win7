@@ -1,31 +1,17 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#ifndef USBEYETOYWEBCAM_H
-#define USBEYETOYWEBCAM_H
+#pragma once
 
-#include "USB/qemu-usb/vl.h"
-#include "USB/configuration.h"
+#include "USB/qemu-usb/qusb.h"
 #include "USB/deviceproxy.h"
-#include "videodeviceproxy.h"
+#include "USB/usb-eyetoy/videodev.h"
 #include <mutex>
 
 
 namespace usb_eyetoy
 {
-	static const uint8_t eyetoy_dev_descriptor[] = {
+	static const u8 eyetoy_dev_descriptor[] = {
 		0x12,          /* bLength */
 		0x01,          /* bDescriptorType */
 		WBVAL(0x0110), /* bcdUSB */
@@ -42,7 +28,7 @@ namespace usb_eyetoy
 		0x01,          /* bNumConfigurations */
 	};
 
-	static const uint8_t eyetoy_config_descriptor[] = {
+	static const u8 eyetoy_config_descriptor[] = {
 		0x09,        // bLength
 		0x02,        // bDescriptorType (Configuration)
 		0xB4, 0x00,  // wTotalLength 180
@@ -229,7 +215,7 @@ namespace usb_eyetoy
 		0x00, 0x00,  // wLockDelay 0
 	};
 
-	static const uint8_t ov511p_dev_descriptor[] = {
+	static const u8 ov511p_dev_descriptor[] = {
 		0x12,        // bLength
 		0x01,        // bDescriptorType (Device)
 		0x00, 0x01,  // bcdUSB 1.00
@@ -246,7 +232,7 @@ namespace usb_eyetoy
 		0x01,        // bNumConfigurations 1
 	};
 
-	static const uint8_t ov511p_config_descriptor[] = {
+	static const u8 ov511p_config_descriptor[] = {
 		0x09,        // bLength
 		0x02,        // bDescriptorType (Configuration)
 		0x89, 0x00,  // wTotalLength 137
@@ -393,7 +379,7 @@ namespace usb_eyetoy
 		0x01,        // bInterval 1 (unit depends on device speed)
 	};
 
-	static const uint8_t ov519_defaults[] = {
+	static const u8 ov519_defaults[] = {
 		0xc0, 0x00, 0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
 		0x14, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x44, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x08, 0x98, 0xff, 0x00, 0x03, 0x00, 0x00, 0x1e, 0x01, 0xf1, 0x00, 0x01, 0x00, 0x00, 0x00,
@@ -412,7 +398,7 @@ namespace usb_eyetoy
 		0x20, 0x40, 0x60, 0x80, 0xa0, 0xc0, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	};
 
-	static const uint8_t ov7648_defaults[] = {
+	static const u8 ov7648_defaults[] = {
 		0x00, 0x84, 0x84, 0x84, 0x34, 0x3e, 0x80, 0x8c, 0x00, 0x00, 0x76, 0x48, 0x7b, 0x5b, 0x00, 0x98,
 		0x57, 0x00, 0x14, 0xa3, 0x04, 0x00, 0x00, 0x1a, 0xba, 0x03, 0xf3, 0x00, 0x7f, 0xa2, 0x00, 0x01,
 		0xc0, 0x80, 0x80, 0xde, 0x10, 0x8a, 0xa2, 0xe2, 0x20, 0x00, 0x00, 0x00, 0x88, 0x81, 0x00, 0x94,
@@ -431,7 +417,7 @@ namespace usb_eyetoy
 		0x75, 0x75, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	};
 
-	static const uint8_t ov511p_defaults[] = {
+	static const u8 ov511p_defaults[] = {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x01, 0x27, 0x1d, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x4f, 0x1d, 0x00, 0x01, 0x01, 0x04,
 		0x01, 0x01, 0x01, 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -450,7 +436,7 @@ namespace usb_eyetoy
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	};
 
-	static const uint8_t ov7620_defaults[] = {
+	static const u8 ov7620_defaults[] = {
 		0x00, 0x84, 0x84, 0x84, 0x34, 0x3e, 0x80, 0x8c, 0x00, 0x00, 0x76, 0x48, 0x7b, 0x5b, 0x00, 0x98,
 		0x57, 0x00, 0x14, 0xa3, 0x04, 0x00, 0x00, 0x1a, 0xba, 0x03, 0xf3, 0x00, 0x7f, 0xa2, 0x00, 0x01,
 		0xc0, 0x80, 0x80, 0xde, 0x10, 0x8a, 0xa2, 0xe2, 0x20, 0x00, 0x00, 0x00, 0x88, 0x81, 0x00, 0x94,
@@ -469,37 +455,16 @@ namespace usb_eyetoy
 		0x75, 0x75, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	};
 
-	class EyeToyWebCamDevice
+	class EyeToyWebCamDevice final : public DeviceProxy
 	{
 	public:
-		virtual ~EyeToyWebCamDevice() {}
-		static USBDevice* CreateDevice(int port);
-		static const TCHAR* Name()
-		{
-			return TEXT("Webcam (EyeToy)");
-		}
-		static const char* TypeName()
-		{
-			return "webcam";
-		}
-		static std::list<std::string> ListAPIs()
-		{
-			return RegisterVideoDevice::instance().Names();
-		}
-		static const TCHAR* LongAPIName(const std::string& name)
-		{
-			auto proxy = RegisterVideoDevice::instance().Proxy(name);
-			if (proxy)
-				return proxy->Name();
-			return nullptr;
-		}
-		static int Configure(int port, const std::string& api, void* data);
-		static int Freeze(FreezeAction mode, USBDevice* dev, void* data);
-		static std::vector<std::string> SubTypes()
-		{
-			return {"Sony EyeToy", "Konami Capture Eye"};
-		}
+		USBDevice* CreateDevice(SettingsInterface& si, u32 port, u32 subtype) const override;
+		const char* Name() const override;
+		const char* TypeName() const override;
+		bool Freeze(USBDevice* dev, StateWrapper& sw) const override;
+		void UpdateSettings(USBDevice* dev, SettingsInterface& si) const override;
+		std::span<const char*> SubTypes() const override;
+		std::span<const SettingInfo> Settings(u32 subtype) const override;
 	};
 
 } // namespace usb_eyetoy
-#endif

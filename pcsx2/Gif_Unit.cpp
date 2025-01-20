@@ -1,19 +1,6 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
 
 #include "Gif_Unit.h"
@@ -84,7 +71,8 @@ bool Gif_HandlerAD(u8* pMem)
 	else if (reg == GIF_A_D_REG_FINISH)
 	{ // FINISH
 		GUNIT_WARN("GIF Handler - FINISH");
-		CSRreg.FINISH = true;
+		gifUnit.gsFINISH.gsFINISHFired = false;
+		gifUnit.gsFINISH.gsFINISHPending = true;
 	}
 	else if (reg == GIF_A_D_REG_LABEL)
 	{ // LABEL
@@ -98,11 +86,11 @@ bool Gif_HandlerAD(u8* pMem)
 	return false;
 }
 
-bool Gif_HandlerAD_MTVU(u8* pMem)
+void Gif_HandlerAD_MTVU(u8* pMem)
 {
 	// Note: Atomic communication is with MTVU.cpp Get_GSChanges
-	u32 reg = pMem[8];
-	u32* data = (u32*)pMem;
+	const u8 reg = pMem[8] & 0x7f;
+	const u32* data = (u32*)pMem;
 
 	if (reg == GIF_A_D_REG_SIGNAL)
 	{ // SIGNAL
@@ -141,13 +129,12 @@ bool Gif_HandlerAD_MTVU(u8* pMem)
 	{
 		DevCon.Warning("GIF Handler Debug - Write to unknown register! [reg=%x]", reg);
 	}
-	return 0;
 }
 
 // Returns true if pcsx2 needed to process the packet...
 bool Gif_HandlerAD_Debug(u8* pMem)
 {
-	u32 reg = pMem[8];
+	const u8 reg = pMem[8] & 0x7f;
 	if (reg == 0x50)
 	{
 		Console.Error("GIF Handler Debug - BITBLTBUF");
@@ -187,6 +174,11 @@ bool Gif_HandlerAD_Debug(u8* pMem)
 
 void Gif_FinishIRQ()
 {
+	if (gifUnit.gsFINISH.gsFINISHPending)
+	{
+		CSRreg.FINISH = true;
+		gifUnit.gsFINISH.gsFINISHPending = false;
+	}
 	if (CSRreg.FINISH && !GSIMR.FINISHMSK && !gifUnit.gsFINISH.gsFINISHFired)
 	{
 		gsIrq();
@@ -194,49 +186,13 @@ void Gif_FinishIRQ()
 	}
 }
 
-// Used in MTVU mode... MTVU will later complete a real packet
-void Gif_AddGSPacketMTVU(GS_Packet& gsPack, GIF_PATH path)
-{
-	GetMTGS().SendSimpleGSPacket(GS_RINGTYPE_MTVU_GSPACKET, 0, 0, path);
-}
-
-void Gif_AddCompletedGSPacket(GS_Packet& gsPack, GIF_PATH path)
-{
-	//DevCon.WriteLn("Adding Completed Gif Packet [size=%x]", gsPack.size);
-	if (COPY_GS_PACKET_TO_MTGS)
-	{
-		GetMTGS().PrepDataPacket(path, gsPack.size / 16);
-		MemCopy_WrappedDest((u128*)&gifUnit.gifPath[path].buffer[gsPack.offset], RingBuffer.m_Ring,
-							GetMTGS().m_packet_writepos, RingBufferSize, gsPack.size / 16);
-		GetMTGS().SendDataPacket();
-	}
-	else
-	{
-		pxAssertDev(!gsPack.readAmount, "Gif Unit - gsPack.readAmount only valid for MTVU path 1!");
-		gifUnit.gifPath[path].readAmount.fetch_add(gsPack.size);
-		GetMTGS().SendSimpleGSPacket(GS_RINGTYPE_GSPACKET, gsPack.offset, gsPack.size, path);
-	}
-}
-
-void Gif_AddBlankGSPacket(u32 size, GIF_PATH path)
-{
-	//DevCon.WriteLn("Adding Blank Gif Packet [size=%x]", size);
-	gifUnit.gifPath[path].readAmount.fetch_add(size);
-	GetMTGS().SendSimpleGSPacket(GS_RINGTYPE_GSPACKET, ~0u, size, path);
-}
-
-void Gif_MTGS_Wait(bool isMTVU)
-{
-	GetMTGS().WaitGS(false, true, isMTVU);
-}
-
-void SaveStateBase::gifPathFreeze(u32 path)
+bool SaveStateBase::gifPathFreeze(u32 path)
 {
 
 	Gif_Path& gifPath = gifUnit.gifPath[path];
-	pxAssertDev(!gifPath.readAmount, "Gif Path readAmount should be 0!");
-	pxAssertDev(!gifPath.gsPack.readAmount, "GS Pack readAmount should be 0!");
-	pxAssertDev(!gifPath.GetPendingGSPackets(), "MTVU GS Pack Queue should be 0!");
+	pxAssertMsg(!gifPath.readAmount, "Gif Path readAmount should be 0!");
+	pxAssertMsg(!gifPath.gsPack.readAmount, "GS Pack readAmount should be 0!");
+	pxAssertMsg(!gifPath.GetPendingGSPackets(), "MTVU GS Pack Queue should be 0!");
 
 	if (!gifPath.isMTVU())
 	{ // FixMe: savestate freeze bug (Gust games) with MTVU enabled
@@ -255,14 +211,18 @@ void SaveStateBase::gifPathFreeze(u32 path)
 		gifPath.readAmount = 0;
 		gifPath.gsPack.readAmount = 0;
 	}
+
+	return IsOkay();
 }
 
-void SaveStateBase::gifFreeze()
+bool SaveStateBase::gifFreeze()
 {
 	bool mtvuMode = THREAD_VU1;
 	pxAssert(vu1Thread.IsDone());
-	GetMTGS().WaitGS();
-	FreezeTag("Gif Unit");
+	MTGS::WaitGS();
+	if (!FreezeTag("Gif Unit"))
+		return false;
+
 	Freeze(mtvuMode);
 	Freeze(gifUnit.stat);
 	Freeze(gifUnit.gsSIGNAL);
@@ -279,4 +239,6 @@ void SaveStateBase::gifFreeze()
 			// ToDo: gifUnit.SwitchMTVU(mtvuMode);
 		}
 	}
+
+	return true;
 }

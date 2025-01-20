@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #include <algorithm>
 
@@ -67,14 +53,20 @@ void SettingsLoadWrapper::Entry(const char* section, const char* var, bool& valu
 	value = m_si.GetBoolValue(section, var, defvalue);
 }
 
-void SettingsLoadWrapper::Entry(const char* section, const char* var, double& value, const double defvalue /*= 0.0*/)
+void SettingsLoadWrapper::Entry(const char* section, const char* var, float& value, const float defvalue /*= 0.0*/)
 {
-	value = m_si.GetDoubleValue(section, var, defvalue);
+	value = m_si.GetFloatValue(section, var, defvalue);
 }
 
 void SettingsLoadWrapper::Entry(const char* section, const char* var, std::string& value, const std::string& default_value /*= std::string()*/)
 {
 	if (!m_si.GetStringValue(section, var, &value) && &value != &default_value)
+		value = default_value;
+}
+
+void SettingsLoadWrapper::Entry(const char* section, const char* var, SmallStringBase& value, std::string_view default_value /* = std::string_view() */)
+{
+	if (!m_si.GetStringValue(section, var, &value) && value.data() != default_value.data())
 		value = default_value;
 }
 
@@ -141,12 +133,17 @@ void SettingsSaveWrapper::Entry(const char* section, const char* var, bool& valu
 	m_si.SetBoolValue(section, var, value);
 }
 
-void SettingsSaveWrapper::Entry(const char* section, const char* var, double& value, const double defvalue /*= 0.0*/)
+void SettingsSaveWrapper::Entry(const char* section, const char* var, float& value, const float defvalue /*= 0.0*/)
 {
-	m_si.SetDoubleValue(section, var, value);
+	m_si.SetFloatValue(section, var, value);
 }
 
 void SettingsSaveWrapper::Entry(const char* section, const char* var, std::string& value, const std::string& default_value /*= std::string()*/)
+{
+	m_si.SetStringValue(section, var, value.c_str());
+}
+
+void SettingsSaveWrapper::Entry(const char* section, const char* var, SmallStringBase& value, std::string_view default_value /* = std::string_view() */)
 {
 	m_si.SetStringValue(section, var, value.c_str());
 }
@@ -168,4 +165,66 @@ void SettingsSaveWrapper::_EnumEntry(const char* section, const char* var, int& 
 	const int cnt = _calcEnumLength(enumArray);
 	const int index = (value < 0 || value >= cnt) ? defvalue : value;
 	m_si.SetStringValue(section, var, enumArray[index]);
+}
+
+SettingsClearWrapper::SettingsClearWrapper(SettingsInterface& si)
+	: SettingsWrapper(si)
+{
+}
+
+bool SettingsClearWrapper::IsLoading() const
+{
+	return false;
+}
+
+bool SettingsClearWrapper::IsSaving() const
+{
+	return true;
+}
+
+void SettingsClearWrapper::Entry(const char* section, const char* var, int& value, const int defvalue /*= 0*/)
+{
+	m_si.DeleteValue(section, var);
+}
+
+void SettingsClearWrapper::Entry(const char* section, const char* var, uint& value, const uint defvalue /*= 0*/)
+{
+	m_si.DeleteValue(section, var);
+}
+
+void SettingsClearWrapper::Entry(const char* section, const char* var, bool& value, const bool defvalue /*= false*/)
+{
+	m_si.DeleteValue(section, var);
+}
+
+void SettingsClearWrapper::Entry(const char* section, const char* var, float& value, const float defvalue /*= 0.0*/)
+{
+	m_si.DeleteValue(section, var);
+}
+
+void SettingsClearWrapper::Entry(const char* section, const char* var, std::string& value, const std::string& default_value /*= std::string()*/)
+{
+	m_si.DeleteValue(section, var);
+}
+
+void SettingsClearWrapper::Entry(const char* section, const char* var, SmallStringBase& value, std::string_view default_value /* = std::string_view() */)
+{
+	m_si.DeleteValue(section, var);
+}
+
+bool SettingsClearWrapper::EntryBitBool(const char* section, const char* var, bool value, const bool defvalue /*= false*/)
+{
+	m_si.DeleteValue(section, var);
+	return defvalue;
+}
+
+int SettingsClearWrapper::EntryBitfield(const char* section, const char* var, int value, const int defvalue /*= 0*/)
+{
+	m_si.DeleteValue(section, var);
+	return defvalue;
+}
+
+void SettingsClearWrapper::_EnumEntry(const char* section, const char* var, int& value, const char* const* enumArray, int defvalue)
+{
+	m_si.DeleteValue(section, var);
 }

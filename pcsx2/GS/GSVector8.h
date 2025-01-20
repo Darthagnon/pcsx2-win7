@@ -1,21 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include <cassert>
-
-#if _M_SSE >= 0x500
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 class alignas(32) GSVector8
 {
@@ -53,7 +37,9 @@ public:
 		u16 U16[16];
 		u32 U32[8];
 		u64 U64[4];
+#if _M_SSE >= 0x500
 		__m256 m;
+#endif
 		__m128 m0, m1;
 	};
 
@@ -104,6 +90,8 @@ public:
 		return GSVector8(cxpr_init, x, x, x, x);
 	}
 
+#if _M_SSE >= 0x500
+
 	__forceinline GSVector8(float x0, float y0, float z0, float w0, float x1, float y1, float z1, float w1)
 	{
 		m = _mm256_set_ps(w1, z1, y1, x1, w0, z0, y0, x0);
@@ -116,8 +104,8 @@ public:
 
 	__forceinline GSVector8(__m128 m0, __m128 m1)
 	{
-#if 0 // _MSC_VER >= 1700 
-		
+#if 0 // _MSC_VER >= 1700
+
 		this->m = _mm256_permute2f128_ps(_mm256_castps128_ps256(m0), _mm256_castps128_ps256(m1), 0x20);
 
 #else
@@ -126,8 +114,6 @@ public:
 
 #endif
 	}
-
-	constexpr GSVector8(const GSVector8& v) = default;
 
 	__forceinline explicit GSVector8(float f)
 	{
@@ -174,11 +160,6 @@ public:
 
 	__forceinline static GSVector8 cast(const GSVector4& v);
 	__forceinline static GSVector8 cast(const GSVector4i& v);
-
-	__forceinline void operator=(const GSVector8& v)
-	{
-		m = v.m;
-	}
 
 	__forceinline void operator=(float f)
 	{
@@ -499,7 +480,7 @@ public:
 	{
 		// TODO: use blendps when src == dst
 
-		ASSERT(src < 4 && dst < 4); // not cross lane like extract32()
+		pxAssert(src < 4 && dst < 4); // not cross lane like extract32()
 
 		switch (dst)
 		{
@@ -510,7 +491,7 @@ public:
 					case 1: return yyyy(v).zxzw(*this);
 					case 2: return yyzz(v).zxzw(*this);
 					case 3: return yyww(v).zxzw(*this);
-					default: __assume(0);
+					default: ASSUME(0);
 				}
 				break;
 			case 1:
@@ -520,7 +501,7 @@ public:
 					case 1: return xxyy(v).xzzw(*this);
 					case 2: return xxzz(v).xzzw(*this);
 					case 3: return xxww(v).xzzw(*this);
-					default: __assume(0);
+					default: ASSUME(0);
 				}
 				break;
 			case 2:
@@ -530,7 +511,7 @@ public:
 					case 1: return xyzx(wwyy(v));
 					case 2: return xyzx(wwzz(v));
 					case 3: return xyzx(wwww(v));
-					default: __assume(0);
+					default: ASSUME(0);
 				}
 				break;
 			case 3:
@@ -540,11 +521,11 @@ public:
 					case 1: return xyxz(zzyy(v));
 					case 2: return xyxz(zzzz(v));
 					case 3: return xyxz(zzww(v));
-					default: __assume(0);
+					default: ASSUME(0);
 				}
 				break;
 			default:
-				__assume(0);
+				ASSUME(0);
 		}
 
 		return *this;
@@ -553,7 +534,7 @@ public:
 	template <int i>
 	__forceinline int extract32() const
 	{
-		ASSERT(i < 8);
+		pxAssert(i < 8);
 
 		return extract<i / 4>().template extract32<i & 3>();
 	}
@@ -561,7 +542,7 @@ public:
 	template <int i>
 	__forceinline GSVector8 insert(__m128 m) const
 	{
-		ASSERT(i < 2);
+		pxAssert(i < 2);
 
 		return GSVector8(_mm256_insertf128_ps(this->m, m, i));
 	}
@@ -569,7 +550,7 @@ public:
 	template <int i>
 	__forceinline GSVector4 extract() const
 	{
-		ASSERT(i < 2);
+		pxAssert(i < 2);
 
 		if (i == 0)
 			return GSVector4(_mm256_castps256_ps128(m));
@@ -948,6 +929,5 @@ public:
 	// TODO: v.(x0|y0|z0|w0|x1|y1|z1|w1) // broadcast element
 
 #endif
-};
-
 #endif
+};

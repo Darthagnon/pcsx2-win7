@@ -1,20 +1,10 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
+
 #include "Pcsx2Defs.h"
+
 #include <cstdio>
 #include <ctime>
 #include <memory>
@@ -22,6 +12,9 @@
 #include <string>
 #include <vector>
 #include <sys/stat.h>
+
+class Error;
+class ProgressCallback;
 
 #ifdef _WIN32
 #define FS_OSPATH_SEPARATOR_CHARACTER '\\'
@@ -46,6 +39,7 @@ enum FILESYSTEM_FIND_FLAGS
 	FILESYSTEM_FIND_FOLDERS = (1 << 3),
 	FILESYSTEM_FIND_FILES = (1 << 4),
 	FILESYSTEM_FIND_KEEP_ARRAY = (1 << 5),
+	FILESYSTEM_FIND_SORT_BY_NAME = (1 << 6),
 };
 
 struct FILESYSTEM_STAT_DATA
@@ -69,9 +63,6 @@ namespace FileSystem
 {
 	using FindResultsArray = std::vector<FILESYSTEM_FIND_DATA>;
 
-	/// Returns the display name of a filename. Usually this is the same as the path.
-	std::string GetDisplayNameFromPath(const std::string_view& path);
-
 	/// Returns a list of "root directories" (i.e. root/home directories on Linux, drive letters on Windows).
 	std::vector<std::string> GetRootDirectoryList();
 
@@ -85,6 +76,9 @@ namespace FileSystem
 	bool StatFile(std::FILE* fp, FILESYSTEM_STAT_DATA* pStatData);
 	s64 GetPathFileSize(const char* path);
 
+	/// Returns the last modified timestamp for a file.
+	std::optional<std::time_t> GetFileTimestamp(const char* path);
+
 	/// File exists?
 	bool FileExists(const char* path);
 
@@ -95,20 +89,38 @@ namespace FileSystem
 	bool DirectoryIsEmpty(const char* path);
 
 	/// Delete file
-	bool DeleteFilePath(const char* path);
+	bool DeleteFilePath(const char* path, Error* error = nullptr);
 
 	/// Rename file
-	bool RenamePath(const char* OldPath, const char* NewPath);
+	bool RenamePath(const char* OldPath, const char* NewPath, Error* error = nullptr);
+
+	/// Deleter functor for managed file pointers
+	struct FileDeleter
+	{
+		void operator()(std::FILE* fp)
+		{
+			std::fclose(fp);
+		}
+	};
 
 	/// open files
-	using ManagedCFilePtr = std::unique_ptr<std::FILE, void (*)(std::FILE*)>;
-	ManagedCFilePtr OpenManagedCFile(const char* filename, const char* mode);
-	std::FILE* OpenCFile(const char* filename, const char* mode);
+	using ManagedCFilePtr = std::unique_ptr<std::FILE, FileDeleter>;
+	ManagedCFilePtr OpenManagedCFile(const char* filename, const char* mode, Error* error = nullptr);
+	// Tries to open a file using the given filename, but if that fails searches
+	// the directory for a file with a case-insensitive match.
+	// This is the same as OpenManagedCFile on Windows and MacOS
+	ManagedCFilePtr OpenManagedCFileTryIgnoreCase(const char* filename, const char* mode, Error* error = nullptr);
+	std::FILE* OpenCFile(const char* filename, const char* mode, Error* error = nullptr);
+	// Tries to open a file using the given filename, but if that fails searches
+	// the directory for a file with a case-insensitive match.
+	// This is the same as OpenCFile on Windows and MacOS
+	std::FILE* OpenCFileTryIgnoreCase(const char* filename, const char* mode, Error* error = nullptr);
+
 	int FSeek64(std::FILE* fp, s64 offset, int whence);
 	s64 FTell64(std::FILE* fp);
 	s64 FSize64(std::FILE* fp);
 
-	int OpenFDFile(const char* filename, int flags, int mode);
+	int OpenFDFile(const char* filename, int flags, int mode, Error* error = nullptr);
 
 	/// Sharing modes for OpenSharedCFile().
 	enum class FileShareMode
@@ -121,25 +133,29 @@ namespace FileSystem
 
 	/// Opens a file in shareable mode (where other processes can access it concurrently).
 	/// Only has an effect on Windows systems.
-	ManagedCFilePtr OpenManagedSharedCFile(const char* filename, const char* mode, FileShareMode share_mode);
-	std::FILE* OpenSharedCFile(const char* filename, const char* mode, FileShareMode share_mode);
+	ManagedCFilePtr OpenManagedSharedCFile(const char* filename, const char* mode, FileShareMode share_mode, Error* error = nullptr);
+	std::FILE* OpenSharedCFile(const char* filename, const char* mode, FileShareMode share_mode, Error* error = nullptr);
 
 	std::optional<std::vector<u8>> ReadBinaryFile(const char* filename);
 	std::optional<std::vector<u8>> ReadBinaryFile(std::FILE* fp);
 	std::optional<std::string> ReadFileToString(const char* filename);
 	std::optional<std::string> ReadFileToString(std::FILE* fp);
 	bool WriteBinaryFile(const char* filename, const void* data, size_t data_length);
-	bool WriteStringToFile(const char* filename, const std::string_view& sv);
+	bool WriteStringToFile(const char* filename, const std::string_view sv);
+	size_t ReadFileWithProgress(std::FILE* fp, void* dst, size_t length, ProgressCallback* progress,
+		Error* error = nullptr, size_t chunk_size = 16 * 1024 * 1024);
+	size_t ReadFileWithPartialProgress(std::FILE* fp, void* dst, size_t length, ProgressCallback* progress,
+		int startPercent, int endPercent, Error* error = nullptr, size_t chunk_size = 16 * 1024 * 1024);
 
 	/// creates a directory in the local filesystem
 	/// if the directory already exists, the return value will be true.
 	/// if Recursive is specified, all parent directories will be created
 	/// if they do not exist.
-	bool CreateDirectoryPath(const char* path, bool recursive);
+	bool CreateDirectoryPath(const char* path, bool recursive, Error* error = nullptr);
 
 	/// Creates a directory if it doesn't already exist.
 	/// Returns false if it does not exist and creation failed.
-	bool EnsureDirectoryExists(const char* path, bool recursive);
+	bool EnsureDirectoryExists(const char* path, bool recursive, Error* error = nullptr);
 
 	/// Removes a directory.
 	bool DeleteDirectory(const char* path);
@@ -164,4 +180,33 @@ namespace FileSystem
 	/// Does nothing and returns false on non-Windows platforms.
 	bool SetPathCompression(const char* path, bool enable);
 
+	// Creates a symbolic link. Note that on Windows this requires elevated
+	// privileges so this is mostly useful for testing purposes.
+	bool CreateSymLink(const char* link, const char* target);
+
+	/// Checks if a file or directory is a symbolic link.
+	bool IsSymbolicLink(const char* path);
+
+	/// Deletes a symbolic link (either a file or directory).
+	bool DeleteSymbolicLink(const char* path, Error* error = nullptr);
+
+#ifdef _WIN32
+	// Path limit remover, but also converts to a wide string at the same time.
+	bool GetWin32Path(std::wstring* dest, std::string_view str);
+	std::wstring GetWin32Path(std::string_view str);
+#endif
+
+	/// Abstracts a POSIX file lock.
+#ifndef _WIN32
+	class POSIXLock
+	{
+	public:
+		POSIXLock(int fd);
+		POSIXLock(std::FILE* fp);
+		~POSIXLock();
+
+	private:
+		int m_fd;
+	};
+#endif
 }; // namespace FileSystem

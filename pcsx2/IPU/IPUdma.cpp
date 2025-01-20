@@ -1,39 +1,26 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
-#include "IPU.h"
+#include "IPU/IPU.h"
 #include "IPU/IPUdma.h"
-#include "mpeg2lib/Mpeg.h"
+#include "IPU/IPU_MultiISA.h"
 
-IPUStatus IPU1Status;
-bool CommandExecuteQueued;
+IPUDMAStatus IPU1Status;
 
 void ipuDmaReset()
 {
 	IPU1Status.InProgress	= false;
 	IPU1Status.DMAFinished	= true;
-	CommandExecuteQueued	= false;
 }
 
-void SaveStateBase::ipuDmaFreeze()
+bool SaveStateBase::ipuDmaFreeze()
 {
-	FreezeTag( "IPUdma" );
+	if (!FreezeTag("IPUdma"))
+		return false;
+
 	Freeze(IPU1Status);
-	Freeze(CommandExecuteQueued);
+	return IsOkay();
 }
 
 static __fi int IPU1chain() {
@@ -74,13 +61,22 @@ void IPU1dma()
 		//if we don't, we risk causing the data to go out of sync with the fifo and we end up losing some!
 		//This is true for Dragons Quest 8 and probably others which suspend the DMA.
 		DevCon.Warning("IPU1 running when IPU1 DMA disabled! CHCR %x QWC %x", ipu1ch.chcr._u32, ipu1ch.qwc);
+		CPU_SET_DMASTALL(DMAC_TO_IPU, true);
 		return;
 	}
 
-	if (IPU1Status.DataRequested == false)
+	if (IPUCoreStatus.DataRequested == false)
 	{
 		// IPU isn't expecting any data, so put it in to wait mode.
 		cpuRegs.eCycle[4] = 0x9999;
+		CPU_SET_DMASTALL(DMAC_TO_IPU, true);
+
+		// Shouldn't Happen.
+		if (IPUCoreStatus.WaitingOnIPUTo)
+		{
+			IPUCoreStatus.WaitingOnIPUTo = false;
+			IPU_INT_PROCESS(4 * BIAS);
+		}
 		return;
 	}
 
@@ -120,7 +116,7 @@ void IPU1dma()
 	if (IPU1Status.InProgress)
 		totalqwc += IPU1chain();
 
-	//Do this here to prevent double settings on Chain DMA's
+	// Nothing has been processed except maybe a tag, or the DMA is ending
 	if(totalqwc == 0 || (IPU1Status.DMAFinished && !IPU1Status.InProgress))
 	{
 		totalqwc = std::max(4, totalqwc) + tagcycles;
@@ -128,23 +124,14 @@ void IPU1dma()
 	}
 	else
 	{
-		IPU1Status.DataRequested = false;
-
-		if (!(IPU1Status.DMAFinished && !IPU1Status.InProgress))
-		{
-			cpuRegs.eCycle[4] = 0x9999;//IPU_INT_TO(2048);
-		}
-		else
-		{
-			totalqwc = std::max(4, totalqwc) + tagcycles;
-			IPU_INT_TO(totalqwc * BIAS);
-		}
+			cpuRegs.eCycle[4] = 0x9999;
+			CPU_SET_DMASTALL(DMAC_TO_IPU, true);
 	}
 
-	if (ipuRegs.ctrl.BUSY && !CommandExecuteQueued)
+	if (IPUCoreStatus.WaitingOnIPUTo && g_BP.IFC >= 1)
 	{
-		CommandExecuteQueued = true;
-		CPU_INT(IPU_PROCESS, totalqwc * BIAS);
+		IPUCoreStatus.WaitingOnIPUTo = false;
+		IPU_INT_PROCESS(totalqwc * BIAS);
 	}
 
 	IPU_LOG("Completed Call IPU1 DMA QWC Remaining %x Finished %d In Progress %d tadr %x", ipu1ch.qwc, IPU1Status.DMAFinished, IPU1Status.InProgress, ipu1ch.tadr);
@@ -154,8 +141,13 @@ void IPU0dma()
 {
 	if(!ipuRegs.ctrl.OFC)
 	{
-		if(!CommandExecuteQueued)
+		// This shouldn't happen.
+		if (IPUCoreStatus.WaitingOnIPUFrom)
+		{
+			IPUCoreStatus.WaitingOnIPUFrom = false;
 			IPUProcessInterrupt();
+		}
+		CPU_SET_DMASTALL(DMAC_FROM_IPU, true);
 		return;
 	}
 
@@ -165,6 +157,12 @@ void IPU0dma()
 	if ((!(ipu0ch.chcr.STR) || (cpuRegs.interrupt & (1 << DMAC_FROM_IPU))) || (ipu0ch.qwc == 0))
 	{
 		DevCon.Warning("How??");
+		// This shouldn't happen.
+		if (IPUCoreStatus.WaitingOnIPUFrom)
+		{
+			IPUCoreStatus.WaitingOnIPUFrom = false;
+			IPU_INT_PROCESS(ipuRegs.ctrl.OFC * BIAS);
+		}
 		return;
 	}
 
@@ -182,19 +180,22 @@ void IPU0dma()
 
 	ipu0ch.madr += readsize << 4;
 	ipu0ch.qwc -= readsize;
-	
+
 	if (dmacRegs.ctrl.STS == STS_fromIPU)   // STS == fromIPU
 	{
 		//DevCon.Warning("fromIPU Stall Control");
 		dmacRegs.stadr.ADDR = ipu0ch.madr;
 	}
 
-	IPU_INT_FROM( readsize * BIAS );
+	if (!ipu0ch.qwc)
+		IPU_INT_FROM(readsize * BIAS);
 
-	if (ipuRegs.ctrl.BUSY && !CommandExecuteQueued)
+	CPU_SET_DMASTALL(DMAC_FROM_IPU, true);
+
+	if (ipuRegs.ctrl.BUSY && IPUCoreStatus.WaitingOnIPUFrom)
 	{
-		CommandExecuteQueued = true;
-		CPU_INT(IPU_PROCESS, 4);
+		IPUCoreStatus.WaitingOnIPUFrom = false;
+		IPU_INT_PROCESS(readsize * BIAS);
 	}
 }
 
@@ -205,6 +206,7 @@ __fi void dmaIPU0() // fromIPU
 	if (dmacRegs.ctrl.STS == STS_fromIPU)   // STS == fromIPU - Initial settings
 		dmacRegs.stadr.ADDR = ipu0ch.madr;
 
+	CPU_SET_DMASTALL(DMAC_FROM_IPU, false);
 	// Note: This should probably be a very small value, however anything lower than this will break Mana Khemia
 	// This is because the game sends bad DMA information, starts an IDEC, then sets it to the correct values
 	// but because our IPU is too quick, it messes up the sync between the DMA and IPU.
@@ -230,6 +232,7 @@ __fi void dmaIPU0() // fromIPU
 __fi void dmaIPU1() // toIPU
 {
 	IPU_LOG("IPU1DMAStart QWC %x, MADR %x, CHCR %x, TADR %x", ipu1ch.qwc, ipu1ch.madr, ipu1ch.chcr._u32, ipu1ch.tadr);
+	CPU_SET_DMASTALL(DMAC_TO_IPU, false);
 
 	if (ipu1ch.chcr.MOD == CHAIN_MODE)  //Chain Mode
 	{
@@ -252,28 +255,19 @@ __fi void dmaIPU1() // toIPU
 				IPU1Status.DMAFinished = false;
 			}
 		}
-
-		if(IPU1Status.DataRequested)
-			IPU1dma();
-		else
-			cpuRegs.eCycle[4] = 0x9999;
 	}
 	else // Normal Mode
 	{
 			IPU_LOG("Setting up IPU1 Normal mode");
 			IPU1Status.InProgress = true;
 			IPU1Status.DMAFinished = true;
-
-			if (IPU1Status.DataRequested)
-				IPU1dma();
-			else
-				cpuRegs.eCycle[4] = 0x9999;
 	}
+
+	IPU1dma();
 }
 
 void ipuCMDProcess()
 {
-	CommandExecuteQueued = false;
 	IPUProcessInterrupt();
 }
 
@@ -289,6 +283,7 @@ void ipu0Interrupt()
 
 	ipu0ch.chcr.STR = false;
 	hwDmacIrq(DMAC_FROM_IPU);
+	CPU_SET_DMASTALL(DMAC_FROM_IPU, false);
 	DMA_LOG("IPU0 DMA End");
 }
 
@@ -305,4 +300,5 @@ __fi void ipu1Interrupt()
 	DMA_LOG("IPU1 DMA End");
 	ipu1ch.chcr.STR = false;
 	hwDmacIrq(DMAC_TO_IPU);
+	CPU_SET_DMASTALL(DMAC_TO_IPU, false);
 }

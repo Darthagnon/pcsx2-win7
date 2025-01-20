@@ -1,21 +1,9 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
-#include "fmt/core.h"
+#include "fmt/format.h"
 
 #define eeAddrInRange(name, addr) \
 	(addr >= EEMemoryMap::name##_Start && addr < EEMemoryMap::name##_End)
@@ -179,14 +167,14 @@ static __ri const char* _eelog_GetHwName( u32 addr, T val )
 		EasyCase(fromSPR_MADR);
 		EasyCase(fromSPR_QWC);
 		EasyCase(fromSPR_SADR);
-		
+
 		EasyCase(toSPR_CHCR);
 		EasyCase(toSPR_MADR);
 		EasyCase(toSPR_QWC);
 		EasyCase(toSPR_TADR);
 		EasyCase(toSPR_SADR);
 
-		// DMAC!		
+		// DMAC!
 		EasyCase(DMAC_CTRL);
 		EasyCase(DMAC_STAT);
 		EasyCase(DMAC_PCR);
@@ -268,7 +256,7 @@ template< typename T>
 static __ri void eeHwTraceLog( u32 addr, T val, bool mode )
 {
 	if (!IsDevBuild) return;
-	if (!EmuConfig.Trace.Enabled || !EmuConfig.Trace.EE.m_EnableAll || !EmuConfig.Trace.EE.m_EnableRegisters) return;
+	if (!EmuConfig.Trace.Enabled) return;
 	if (!_eelog_enabled(addr)) return;
 
 	std::string labelStr(fmt::format("Hw{}{}", mode ? "Read" : "Write", sizeof(T) * 8));
@@ -288,11 +276,11 @@ static __ri void eeHwTraceLog( u32 addr, T val, bool mode )
 	}
 	else if constexpr (sizeof(T) == 8)
 	{
-		valStr = fmt::format("0x{:08x}.{:08x}", ((u32*)&val)[1], ((u32*)&val)[0]);
+		valStr = fmt::format("0x{:08x}.{:08x}", static_cast<u32>(val >> 32), static_cast<u32>(val));
 	}
 	else if constexpr (sizeof(T) == 16)
 	{
-		valStr = StringUtil::U128ToString((u128&)val);
+		valStr = StringUtil::U128ToString(r128_to_u128(val));
 	}
 
 	static const char* temp = "%-12s @ 0x%08X/%-16s %s %s";

@@ -1,21 +1,14 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "CDVDdiscReader.h"
 #include "CDVD/CDVD.h"
+#include "Host.h"
+#include "common/Console.h"
+
+#include "common/Error.h"
+
+#include "fmt/format.h"
 
 #include <condition_variable>
 #include <mutex>
@@ -31,29 +24,25 @@ static std::thread s_keepalive_thread;
 ///////////////////////////////////////////////////////////////////////////////
 // State Information                                                         //
 
-u8 strack;
-u8 etrack;
-track tracks[100];
-
 int curDiskType;
 int curTrayStatus;
 
 static u32 csector;
 int cmode;
 
-int lastReadInNewDiskCB = 0;
-u8 directReadSectorBuffer[2448];
+static int lastReadInNewDiskCB = 0;
+static u8 directReadSectorBuffer[2448];
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 // Utility Functions                                                         //
 
-inline u8 dec_to_bcd(u8 dec)
+static u8 dec_to_bcd(u8 dec)
 {
 	return ((dec / 10) << 4) | (dec % 10);
 }
 
-inline void lsn_to_msf(u8* minute, u8* second, u8* frame, u32 lsn)
+static void lsn_to_msf(u8* minute, u8* second, u8* frame, u32 lsn)
 {
 	*frame = dec_to_bcd(lsn % 75);
 	lsn /= 75;
@@ -65,7 +54,7 @@ inline void lsn_to_msf(u8* minute, u8* second, u8* frame, u32 lsn)
 // TocStuff
 void cdvdParseTOC()
 {
-	tracks[1].start_lba = 0;
+	tracks.fill(cdvdTrack{});
 
 	if (!src->GetSectorCount())
 	{
@@ -89,29 +78,35 @@ void cdvdParseTOC()
 
 	for (auto& entry : src->ReadTOC())
 	{
-		if (entry.track < 1 || entry.track > 99)
+		const u8 track = entry.track;
+		if (track < 1 || track >= tracks.size())
+		{
+			Console.Warning("CDVD: Invalid track index %u, ignoring\n", track);
 			continue;
-		strack = std::min(strack, entry.track);
-		etrack = std::max(etrack, entry.track);
-		tracks[entry.track].start_lba = entry.lba;
+		}
+		strack = std::min(strack, track);
+		etrack = std::max(etrack, track);
+		tracks[track].start_lba = entry.lba;
 		if ((entry.control & 0x0C) == 0x04)
 		{
 			std::array<u8, 2352> buffer;
 			// Byte 15 of a raw CD data sector determines the track mode
 			if (src->ReadSectors2352(entry.lba, 1, buffer.data()) && (buffer[15] & 3) == 2)
 			{
-				tracks[entry.track].type = CDVD_MODE2_TRACK;
+				tracks[track].type = CDVD_MODE2_TRACK;
 			}
 			else
 			{
-				tracks[entry.track].type = CDVD_MODE1_TRACK;
+				tracks[track].type = CDVD_MODE1_TRACK;
 			}
 		}
 		else
 		{
-			tracks[entry.track].type = CDVD_AUDIO_TRACK;
+			tracks[track].type = CDVD_AUDIO_TRACK;
 		}
-		fprintf(stderr, "Track %u start sector: %u\n", entry.track, entry.lba);
+#ifdef PCSX2_DEBUG
+		DevCon.WriteLn("cdvdParseTOC: Track %u: LBA %u, Type %u\n", track, tracks[track].start_lba, tracks[track].type);
+#endif
 	}
 }
 
@@ -130,7 +125,7 @@ extern u32 g_last_sector_block_lsn;
 ///////////////////////////////////////////////////////////////////////////////
 // keepAliveThread throws a read event regularly to prevent drive spin down  //
 
-void keepAliveThread()
+static void keepAliveThread()
 {
 	u8 throwaway[2352];
 
@@ -138,7 +133,7 @@ void keepAliveThread()
 	std::unique_lock<std::mutex> guard(s_keepalive_lock);
 
 	while (!s_keepalive_cv.wait_for(guard, std::chrono::seconds(30),
-									[]() { return !s_keepalive_is_open; }))
+		[]() { return !s_keepalive_is_open; }))
 	{
 
 		//printf(" * keepAliveThread: polling drive.\n");
@@ -156,14 +151,7 @@ bool StartKeepAliveThread()
 	if (s_keepalive_is_open == false)
 	{
 		s_keepalive_is_open = true;
-		try
-		{
-			s_keepalive_thread = std::thread(keepAliveThread);
-		}
-		catch (std::system_error&)
-		{
-			s_keepalive_is_open = false;
-		}
+		s_keepalive_thread = std::thread(keepAliveThread);
 	}
 
 	return s_keepalive_is_open;
@@ -182,35 +170,39 @@ void StopKeepAliveThread()
 	s_keepalive_thread.join();
 }
 
-s32 CALLBACK DISCopen(const char* pTitle)
+static bool DISCopen(std::string filename, Error* error)
 {
-	std::string drive(pTitle);
+	std::string drive = filename;
 	GetValidDrive(drive);
 	if (drive.empty())
-		return -1;
+	{
+		Error::SetString(error, fmt::format("Failed to get drive for {}", filename));
+		return false;
+	}
 
 	// open device file
-	try
+	src = std::make_unique<IOCtlSrc>(std::move(drive));
+	if (!src->Reopen(error))
 	{
-		src = std::unique_ptr<IOCtlSrc>(new IOCtlSrc(drive));
-	}
-	catch (std::runtime_error&)
-	{
-		return -1;
+		src.reset();
+		return false;
 	}
 
 	//setup threading manager
-	if (!cdvdStartThread())
-	{
-		src.reset();
-		return -1;
-	}
+	cdvdStartThread();
 	StartKeepAliveThread();
 
-	return cdvdRefreshData();
+	cdvdRefreshData();
+	return true;
 }
 
-void CALLBACK DISCclose()
+static bool DISCprecache(ProgressCallback* progress, Error* error)
+{
+	Error::SetStringView(error, TRANSLATE_SV("CDVD", "Precaching is not supported for discs."));
+	return false;
+}
+
+static void DISCclose()
 {
 	StopKeepAliveThread();
 	cdvdStopThread();
@@ -218,7 +210,7 @@ void CALLBACK DISCclose()
 	src.reset();
 }
 
-s32 CALLBACK DISCreadTrack(u32 lsn, int mode)
+static s32 DISCreadTrack(u32 lsn, int mode)
 {
 	csector = lsn;
 	cmode = mode;
@@ -236,7 +228,7 @@ s32 CALLBACK DISCreadTrack(u32 lsn, int mode)
 	return 0;
 }
 
-s32 CALLBACK DISCgetBuffer(u8* dest)
+static s32 DISCgetBuffer(u8* dest)
 {
 	// Do nothing for out of bounds disc sector reads. It prevents some games
 	// from hanging (All-Star Baseball 2005, Hello Kitty: Roller Rescue,
@@ -272,7 +264,7 @@ s32 CALLBACK DISCgetBuffer(u8* dest)
 	return 0;
 }
 
-s32 CALLBACK DISCreadSubQ(u32 lsn, cdvdSubQ* subq)
+static s32 DISCreadSubQ(u32 lsn, cdvdSubQ* subq)
 {
 	// the formatted subq command returns:  control/adr, track, index, trk min, trk sec, trk frm, 0x00, abs min, abs sec, abs frm
 
@@ -291,37 +283,42 @@ s32 CALLBACK DISCreadSubQ(u32 lsn, cdvdSubQ* subq)
 
 	lsn_to_msf(&subq->trackM, &subq->trackS, &subq->trackF, lsn);
 
-	subq->mode = 1;
 	subq->ctrl = tracks[i].type;
-	subq->trackNum = i;
-	subq->trackIndex = 1;
+
+	// It's important to note that we do _not_ use the current MSF values
+	// from the host's device. We use the MSF values from the lsn.
+	// An easy way to test an implementation is to see if the OSDSYS
+	// CD player can display the correct minute and second values.
+	// From my testing, the IOCTL returns 0 for ctrl. This also breaks
+	// the OSDSYS player. The only "safe" values to receive from the IOCTL
+	// are ADR, trackNum and trackIndex.
+	if (!src->ReadTrackSubQ(subq))
+	{
+		subq->adr = 1;
+		subq->trackNum = i;
+		subq->trackIndex = 1;
+	}
 
 	return 0;
 }
 
-s32 CALLBACK DISCgetTN(cdvdTN* Buffer)
+static s32 DISCgetTN(cdvdTN* Buffer)
 {
 	Buffer->strack = strack;
 	Buffer->etrack = etrack;
 	return 0;
 }
 
-s32 CALLBACK DISCgetTD(u8 Track, cdvdTD* Buffer)
+static s32 DISCgetTD(u8 Track, cdvdTD* Buffer)
 {
 	if (Track == 0)
 	{
 		if (src == nullptr)
 			return -1;
-		try
-		{
-			Buffer->lsn = src->GetSectorCount();
-			Buffer->type = 0;
-			return 0;
-		}
-		catch (...)
-		{
-			return -1;
-		}
+
+		Buffer->lsn = src->GetSectorCount();
+		Buffer->type = 0;
+		return 0;
 	}
 
 	if (Track < strack)
@@ -334,7 +331,7 @@ s32 CALLBACK DISCgetTD(u8 Track, cdvdTD* Buffer)
 	return 0;
 }
 
-s32 CALLBACK DISCgetTOC(void* toc)
+static s32 DISCgetTOC(void* toc)
 {
 	u8* tocBuff = static_cast<u8*>(toc);
 	if (curDiskType == CDVD_TYPE_NODISC)
@@ -351,7 +348,7 @@ s32 CALLBACK DISCgetTOC(void* toc)
 
 		if (mt == 0)
 		{ //single layer
-			// fake it
+			// Single Layer - Values are fixed.
 			tocBuff[0] = 0x04;
 			tocBuff[1] = 0x02;
 			tocBuff[2] = 0xF2;
@@ -359,14 +356,33 @@ s32 CALLBACK DISCgetTOC(void* toc)
 			tocBuff[4] = 0x86;
 			tocBuff[5] = 0x72;
 
+			// These values are fixed on all discs, except position 14 which is the OTP/PTP flags which are 0 in single layer.
+			tocBuff[12] = 0x01;
+			tocBuff[13] = 0x02;
+			tocBuff[14] = 0x01; // Single layer.
+			tocBuff[15] = 0x00;
+
+			// Values are fixed.
 			tocBuff[16] = 0x00; // first sector for layer 0
 			tocBuff[17] = 0x03;
 			tocBuff[18] = 0x00;
 			tocBuff[19] = 0x00;
+
+			cdvdTD trackInfo;
+
+			if (DISCgetTD(0, &trackInfo) == -1)
+				trackInfo.lsn = 0;
+			// Max LSN in the TOC is calculated as the blocks + 0x30000, then - 1.
+			// same as layer 1 start.
+			const s32 maxlsn = trackInfo.lsn + (0x30000 - 1);
+			tocBuff[20] = maxlsn >> 24;
+			tocBuff[21] = (maxlsn >> 16) & 0xff;
+			tocBuff[22] = (maxlsn >> 8) & 0xff;
+			tocBuff[23] = (maxlsn >> 0) & 0xff;
 		}
 		else if (mt == 1)
 		{ //PTP
-			u32 layer1start = src->GetLayerBreakAddress() + 0x30000;
+			const s32 layer1start = src->GetLayerBreakAddress() + 0x30000;
 
 			// dual sided
 			tocBuff[0] = 0x24;
@@ -376,8 +392,13 @@ s32 CALLBACK DISCgetTOC(void* toc)
 			tocBuff[4] = 0x41;
 			tocBuff[5] = 0x95;
 
-			tocBuff[14] = 0x61; // PTP
+			// These values are fixed on all discs, except position 14 which is the OTP/PTP flags.
+			tocBuff[12] = 0x01;
+			tocBuff[13] = 0x02;
+			tocBuff[14] = 0x21; // PTP
+			tocBuff[15] = 0x10;
 
+			// Values are fixed.
 			tocBuff[16] = 0x00;
 			tocBuff[17] = 0x03;
 			tocBuff[18] = 0x00;
@@ -390,7 +411,7 @@ s32 CALLBACK DISCgetTOC(void* toc)
 		}
 		else
 		{ //OTP
-			u32 layer1start = src->GetLayerBreakAddress() + 0x30000;
+			const s32 layer1start = src->GetLayerBreakAddress() + 0x30000;
 
 			// dual sided
 			tocBuff[0] = 0x24;
@@ -400,8 +421,13 @@ s32 CALLBACK DISCgetTOC(void* toc)
 			tocBuff[4] = 0x41;
 			tocBuff[5] = 0x95;
 
-			tocBuff[14] = 0x71; // OTP
+			// These values are fixed on all discs, except position 14 which is the OTP/PTP flags.
+			tocBuff[12] = 0x01;
+			tocBuff[13] = 0x02;
+			tocBuff[14] = 0x31; // OTP
+			tocBuff[15] = 0x10;
 
+			// Values are fixed.
 			tocBuff[16] = 0x00;
 			tocBuff[17] = 0x03;
 			tocBuff[18] = 0x00;
@@ -454,11 +480,13 @@ s32 CALLBACK DISCgetTOC(void* toc)
 		{
 			err = DISCgetTD(i, &trackInfo);
 			lba_to_msf(trackInfo.lsn, &min, &sec, &frm);
-			tocBuff[i * 10 + 30] = trackInfo.type;
-			tocBuff[i * 10 + 32] = err == -1 ? 0 : dec_to_bcd(i); //number
-			tocBuff[i * 10 + 37] = dec_to_bcd(min);
-			tocBuff[i * 10 + 38] = dec_to_bcd(sec);
-			tocBuff[i * 10 + 39] = dec_to_bcd(frm);
+
+			const u8 tocIndex = i - diskInfo.strack;
+			tocBuff[tocIndex * 10 + 30] = trackInfo.type;
+			tocBuff[tocIndex * 10 + 32] = err == -1 ? 0 : dec_to_bcd(i); //number
+			tocBuff[tocIndex * 10 + 37] = dec_to_bcd(min);
+			tocBuff[tocIndex * 10 + 38] = dec_to_bcd(sec);
+			tocBuff[tocIndex * 10 + 39] = dec_to_bcd(frm);
 			fprintf(stderr, "Track %u: %u mins %u secs %u frames\n", i, min, sec, frm);
 		}
 	}
@@ -468,39 +496,39 @@ s32 CALLBACK DISCgetTOC(void* toc)
 	return 0;
 }
 
-s32 CALLBACK DISCgetDiskType()
+static s32 DISCgetDiskType()
 {
 	return curDiskType;
 }
 
-s32 CALLBACK DISCgetTrayStatus()
+static s32 DISCgetTrayStatus()
 {
 	return curTrayStatus;
 }
 
-s32 CALLBACK DISCctrlTrayOpen()
+static s32 DISCctrlTrayOpen()
 {
 	curTrayStatus = CDVD_TRAY_OPEN;
 	return 0;
 }
 
-s32 CALLBACK DISCctrlTrayClose()
+static s32 DISCctrlTrayClose()
 {
 	curTrayStatus = CDVD_TRAY_CLOSE;
 	return 0;
 }
 
-void CALLBACK DISCnewDiskCB(void (*callback)())
+static void DISCnewDiskCB(void (*callback)())
 {
 	newDiscCB = callback;
 }
 
-s32 CALLBACK DISCreadSector(u8* buffer, u32 lsn, int mode)
+static s32 DISCreadSector(u8* buffer, u32 lsn, int mode)
 {
 	return cdvdDirectReadSector(lsn, mode, buffer);
 }
 
-s32 CALLBACK DISCgetDualInfo(s32* dualType, u32* _layer1start)
+static s32 DISCgetDualInfo(s32* dualType, u32* _layer1start)
 {
 	if (src == nullptr)
 		return -1;
@@ -522,10 +550,11 @@ s32 CALLBACK DISCgetDualInfo(s32* dualType, u32* _layer1start)
 	return -1;
 }
 
-CDVD_API CDVDapi_Disc =
+const CDVD_API CDVDapi_Disc =
 	{
 		DISCclose,
 		DISCopen,
+		DISCprecache,
 		DISCreadTrack,
 		DISCgetBuffer,
 		DISCreadSubQ,

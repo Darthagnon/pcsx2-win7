@@ -1,24 +1,15 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
-#include "common/SafeArray.h"
-#include "common/SafeArray.inl"
-#include "CDVD/IsoFS/IsoFSCDVD.h"
-#include "CDVD/IsoFS/IsoFS.h"
+#include "common/Pcsx2Defs.h"
+
+#include <string>
+#include <vector>
+
+class Error;
+class IsoReader;
 
 struct ELF_HEADER {
 	u8	e_ident[16];	//0x7f,"ELF"  (ELF file identifier)
@@ -118,48 +109,45 @@ struct Elf32_Rel {
 	u32	r_info;
 };
 
-class ElfObject
+class ElfObject final
 {
-	private:
-		SafeArray<u8> data;
-		ELF_PHR* proghead = nullptr;
-		ELF_SHR* secthead = nullptr;
-		std::string filename;
+public:
+	ElfObject();
+	ElfObject(const ElfObject&) = delete;
+	~ElfObject();
 
-		void initElfHeaders(bool isPSXElf);
-		void readIso(IsoFile& file);
-		void readFile();
-		void checkElfSize(s64 elfsize);
+	__fi const std::vector<u8>& GetData() const { return data; }
+	__fi std::vector<u8> ReleaseData() const { return std::move(data); }
+	__fi const ELF_HEADER& GetHeader() const { return *reinterpret_cast<const ELF_HEADER*>(data.data()); }
+	__fi u32 GetSize() const { return static_cast<u32>(data.size()); }
 
-	public:
-		ELF_HEADER& header;
+	bool OpenFile(std::string srcfile, bool isPSXElf_, Error* error);
+	bool OpenIsoFile(std::string srcfile, IsoReader& isor, bool isPSXElf_, Error* error);
 
-		// Destructor!
-		// C++ does all the cleanup automagically for us.
-		virtual ~ElfObject() = default;
+	void LoadHeaders();
 
-		ElfObject(std::string srcfile, IsoFile& isofile, bool isPSXElf);
-		ElfObject(std::string srcfile, u32 hdrsize, bool isPSXElf);
+	bool HasProgramHeaders() const;
+	bool HasSectionHeaders() const;
+	bool HasHeaders() const;
 
-		void loadProgramHeaders();
-		void loadSectionHeaders();
-		void loadHeaders();
+	std::pair<u32, u32> GetTextRange() const;
+	u32 GetEntryPoint() const;
+	u32 GetCRC() const;
 
-		bool hasProgramHeaders();
-		bool hasSectionHeaders();
-		bool hasHeaders();
+private:
+	std::vector<u8> data;
+	ELF_PHR* proghead = nullptr;
+	ELF_SHR* secthead = nullptr;
+	std::string filename;
+	bool isPSXElf;
 
-		std::pair<u32,u32> getTextRange();
-		u32 getCRC();
+	bool CheckElfSize(s64 size, Error* error);
+
+	void InitElfHeaders();
+	void LoadProgramHeaders();
+	void LoadSectionHeaders();
+
+	bool HasValidPSXHeader() const;
 };
 
 //-------------------
-extern void loadElfFile(const std::string& filename);
-extern int  GetPS2ElfName( std::string& dest );
-
-
-extern u32 ElfCRC;
-extern u32 ElfEntry;
-extern std::pair<u32,u32> ElfTextRange;
-extern std::string LastELF;
-extern bool isPSXElf;

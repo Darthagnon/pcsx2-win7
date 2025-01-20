@@ -1,20 +1,9 @@
-/*  PCSX2 - PS2 Emulator for PCs
-*  Copyright (C) 2002-2010  PCSX2 Dev Team
-*
-*  PCSX2 is free software: you can redistribute it and/or modify it under the terms
-*  of the GNU Lesser General Public License as published by the Free Software Found-
-*  ation, either version 3 of the License, or (at your option) any later version.
-*
-*  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
-*  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-*  PURPOSE.  See the GNU General Public License for more details.
-*
-*  You should have received a copy of the GNU General Public License along with PCSX2.
-*  If not, see <http://www.gnu.org/licenses/>.
-*/
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #include "common/Threading.h"
 #include "common/Assertions.h"
+#include "common/HostSys.h"
 
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
@@ -26,6 +15,30 @@
 //  Semaphore Implementations
 // --------------------------------------------------------------------------------------
 
+bool Threading::WorkSema::CheckForWork()
+{
+	s32 value = m_state.load(std::memory_order_relaxed);
+	pxAssert(!IsDead(value));
+
+	// we want to switch to the running state, but preserve the waiting empty bit for RUNNING_N -> RUNNING_0
+	// otherwise, we clear the waiting flag (since we're notifying the waiter that we're empty below)
+	while (!m_state.compare_exchange_weak(value,
+		IsReadyForSleep(value) ? STATE_RUNNING_0 : (value & STATE_FLAG_WAITING_EMPTY),
+		std::memory_order_acq_rel, std::memory_order_relaxed))
+	{
+	}
+
+	// if we're not empty, we have work to do
+	if (!IsReadyForSleep(value))
+		return true;
+
+	// this means we're empty, so notify any waiters
+	if (value & STATE_FLAG_WAITING_EMPTY)
+		m_empty_sema.Post();
+
+	// no work to do
+	return false;
+}
 
 void Threading::WorkSema::WaitForWork()
 {
@@ -89,7 +102,7 @@ bool Threading::WorkSema::WaitForEmpty()
 		if (m_state.compare_exchange_weak(value, value | STATE_FLAG_WAITING_EMPTY, std::memory_order_acquire))
 			break;
 	}
-	pxAssertDev(!(value & STATE_FLAG_WAITING_EMPTY), "Multiple threads attempted to wait for empty (not currently supported)");
+	pxAssertMsg(!(value & STATE_FLAG_WAITING_EMPTY), "Multiple threads attempted to wait for empty (not currently supported)");
 	m_empty_sema.Wait();
 	return !IsDead(m_state.load(std::memory_order_relaxed));
 }
@@ -107,7 +120,7 @@ bool Threading::WorkSema::WaitForEmptyWithSpin()
 		waited += ShortSpin();
 		value = m_state.load(std::memory_order_acquire);
 	}
-	pxAssertDev(!(value & STATE_FLAG_WAITING_EMPTY), "Multiple threads attempted to wait for empty (not currently supported)");
+	pxAssertMsg(!(value & STATE_FLAG_WAITING_EMPTY), "Multiple threads attempted to wait for empty (not currently supported)");
 	m_empty_sema.Wait();
 	return !IsDead(m_state.load(std::memory_order_relaxed));
 }
@@ -124,7 +137,7 @@ void Threading::WorkSema::Reset()
 	m_state = STATE_RUNNING_0;
 }
 
-#if !defined(__APPLE__) // macOS implementations are in DarwinSemaphore
+#if !defined(__APPLE__) // macOS implementations are in DarwinThreads
 
 Threading::KernelSemaphore::KernelSemaphore()
 {

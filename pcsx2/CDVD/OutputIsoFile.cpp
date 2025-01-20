@@ -1,26 +1,14 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
+#include "CDVD/IsoFileFormats.h"
+#include "Host.h"
 
-#include "PrecompiledHeader.h"
-#include "IsoFileFormats.h"
-#include "common/Exceptions.h"
+#include "common/Console.h"
 #include "common/FileSystem.h"
 #include "common/StringUtil.h"
 
-#include "fmt/core.h"
+#include "fmt/format.h"
 
 #include <errno.h>
 
@@ -44,7 +32,7 @@ void OutputIsoFile::_init()
 	m_blocks = 0;
 }
 
-void OutputIsoFile::Create(std::string filename, int version)
+bool OutputIsoFile::Create(std::string filename, int version)
 {
 	Close();
 	m_filename = std::move(filename);
@@ -57,12 +45,13 @@ void OutputIsoFile::Create(std::string filename, int version)
 	m_outstream = FileSystem::OpenCFile(m_filename.c_str(), "wb");
 	if (!m_outstream)
 	{
-		Console.Error("(OutputIsoFile::Create) Unable to open the file '%s' for writing: %d", m_filename.c_str(), errno);
-		ScopedExcept ex(Exception::FromErrno(filename, errno));
-		ex->Rethrow();
+		Console.Error(fmt::format("(OutputIsoFile::Create) Unable to open the file '{}' for writing: {}", m_filename, errno));
+		_init();
+		return false;
 	}
 
 	Console.WriteLn("isoFile create ok: %s ", m_filename.c_str());
+	return true;
 }
 
 // Generates format header information for blockdumps.
@@ -123,16 +112,8 @@ void OutputIsoFile::WriteBuffer(const void* src, size_t size)
 {
 	if (std::fwrite(src, size, 1, m_outstream) != 1)
 	{
-		int err = errno;
-		if (!err)
-		{
-			throw Exception::BadStream(m_filename)
-				.SetDiagMsg(fmt::format("An error occurred while writing {} bytes to file", size));
-		}
-
-		ScopedExcept ex(Exception::FromErrno(m_filename, err));
-		ex->SetDiagMsg(fmt::format("An error occurred while writing {} bytes to file: {}", size, ex->DiagMsg()));
-		ex->Rethrow();
+		Host::ReportErrorAsync("Write Error", fmt::format("errno {} when trying to write {} bytes to block dump file.\n\nClosing file.", errno, size));
+		Close();
 	}
 }
 

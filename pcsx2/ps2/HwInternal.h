@@ -1,28 +1,17 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
 #include "Hw.h"
 
+#include "common/SingleRegisterTypes.h"
 
 // hw read functions
 template< uint page > extern mem8_t  hwRead8  (u32 mem);
 template< uint page > extern mem16_t hwRead16 (u32 mem);
 template< uint page > extern mem32_t hwRead32 (u32 mem);
-template< uint page > extern RETURNS_R64        hwRead64 (u32 mem);
+template< uint page > extern mem64_t hwRead64 (u32 mem);
 template< uint page > extern RETURNS_R128       hwRead128(u32 mem);
 
 // Internal hwRead32 which does not log reads, used by hwWrite8/16 to perform
@@ -39,8 +28,8 @@ template<uint page> extern void hwWrite8  (u32 mem, u8  value);
 template<uint page> extern void hwWrite16 (u32 mem, u16 value);
 
 template<uint page> extern void hwWrite32 (u32 mem, mem32_t value);
-template<uint page> extern void hwWrite64 (u32 mem, const mem64_t* srcval);
-template<uint page> extern void hwWrite128(u32 mem, const mem128_t* srcval);
+template<uint page> extern void hwWrite64 (u32 mem, mem64_t srcval);
+template<uint page> extern void TAKES_R128 hwWrite128(u32 mem, r128 srcval);
 
 // --------------------------------------------------------------------------------------
 //  Hardware FIFOs (128 bit access only!)

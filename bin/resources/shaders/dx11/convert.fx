@@ -1,8 +1,5 @@
-#ifdef SHADER_MODEL // make safe to include in resource file to enforce dependency
-
-#ifndef PS_SCALE_FACTOR
-#define PS_SCALE_FACTOR 1
-#endif
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 struct VS_INPUT
 {
@@ -23,7 +20,7 @@ cbuffer cb0 : register(b0)
 	float4 BGColor;
 	int EMODA;
 	int EMODC;
-	int cb0_pad[2];
+	int DOFFSET;
 };
 
 static const float3x3 rgb2yuv =
@@ -78,16 +75,30 @@ float ps_depth_copy(PS_INPUT input) : SV_Depth
 	return sample_c(input.t).r;
 }
 
+PS_OUTPUT ps_downsample_copy(PS_INPUT input)
+{
+	int DownsampleFactor = DOFFSET;
+	int2 ClampMin = int2(EMODA, EMODC);
+	float Weight = BGColor.x;
+
+	int2 coord = max(int2(input.p.xy) * DownsampleFactor, ClampMin);
+
+	PS_OUTPUT output;
+	output.c = (float4)0;
+	for (int yoff = 0; yoff < DownsampleFactor; yoff++)
+	{
+		for (int xoff = 0; xoff < DownsampleFactor; xoff++)
+			output.c += Texture.Load(int3(coord + int2(xoff, yoff), 0));
+	}
+	output.c /= Weight;
+	return output;
+}
+
 PS_OUTPUT ps_filter_transparency(PS_INPUT input)
 {
 	PS_OUTPUT output;
-	
 	float4 c = sample_c(input.t);
-	
-	c.a = dot(c.rgb, float3(0.299, 0.587, 0.114));
-
-	output.c = c;
-
+	output.c = float4(c.rgb, 1.0);
 	return output;
 }
 
@@ -121,17 +132,57 @@ PS_OUTPUT ps_datm0(PS_INPUT input)
 	return output;
 }
 
-PS_OUTPUT ps_mod256(PS_INPUT input)
+PS_OUTPUT ps_datm1_rta_correction(PS_INPUT input)
 {
 	PS_OUTPUT output;
 
-	float4 c = round(sample_c(input.t) * 255);
-	// We use 2 fmod to avoid negative value.
-	float4 fmod1 = fmod(c, 256) + 256;
-	float4 fmod2 = fmod(fmod1, 256);
+	clip(sample_c(input.t).a - 254.5f / 255); // >= 0x80 pass
 
-	output.c = fmod2 / 255.0f;
+	output.c = 0;
 
+	return output;
+}
+
+PS_OUTPUT ps_datm0_rta_correction(PS_INPUT input)
+{
+	PS_OUTPUT output;
+
+	clip(254.5f / 255 - sample_c(input.t).a); // < 0x80 pass (== 0x80 should not pass)
+
+	output.c = 0;
+
+	return output;
+}
+
+PS_OUTPUT ps_rta_correction(PS_INPUT input)
+{
+	PS_OUTPUT output;
+	float4 value = sample_c(input.t);
+	output.c = float4(value.rgb, value.a / (128.25f / 255.0f));
+	return output;
+}
+
+PS_OUTPUT ps_rta_decorrection(PS_INPUT input)
+{
+	PS_OUTPUT output;
+	float4 value = sample_c(input.t);
+	output.c = float4(value.rgb, value.a * (128.25f / 255.0f));
+	return output;
+}
+
+PS_OUTPUT ps_hdr_init(PS_INPUT input)
+{
+	PS_OUTPUT output;
+	float4 value = sample_c(input.t);
+	output.c = float4(round(value.rgb * 255) / 65535, value.a);
+	return output;
+}
+
+PS_OUTPUT ps_hdr_resolve(PS_INPUT input)
+{
+	PS_OUTPUT output;
+	float4 value = sample_c(input.t);
+	output.c = float4(float3(uint3(value.rgb * 65535.5) & 255) / 255, value.a);
 	return output;
 }
 
@@ -158,53 +209,113 @@ PS_OUTPUT ps_convert_float16_rgb5a1(PS_INPUT input)
 
 	// Convert a FLOAT32 (only 16 lsb) depth into a RGB5A1 color texture
 	uint d = uint(sample_c(input.t).r * exp2(32.0f));
-	output.c = float4(uint4((d & 0x1Fu), ((d >> 5) & 0x1Fu), ((d >> 10) & 0x1Fu), (d >> 15) & 0x01u)) / float4(32.0f, 32.0f, 32.0f, 1.0f);
-
+	output.c = float4(uint4(d << 3, d >> 2, d >> 7, d >> 8) & uint4(0xf8, 0xf8, 0xf8, 0x80)) / 255.0f;
 	return output;
 }
+
+float rgba8_to_depth32(float4 val)
+{
+	uint4 c = uint4(val * 255.5f);
+	return float(c.r | (c.g << 8) | (c.b << 16) | (c.a << 24)) * exp2(-32.0f);
+}
+
+float rgba8_to_depth24(float4 val)
+{
+	uint3 c = uint3(val.rgb * 255.5f);
+	return float(c.r | (c.g << 8) | (c.b << 16)) * exp2(-32.0f);
+}
+
+float rgba8_to_depth16(float4 val)
+{
+	uint2 c = uint2(val.rg * 255.5f);
+	return float(c.r | (c.g << 8)) * exp2(-32.0f);
+}
+
+float rgb5a1_to_depth16(float4 val)
+{
+	uint4 c = uint4(val * 255.5f);
+	return float(((c.r & 0xF8u) >> 3) | ((c.g & 0xF8u) << 2) | ((c.b & 0xF8u) << 7) | ((c.a & 0x80u) << 8)) * exp2(-32.0f);
+}
+
+float ps_convert_float32_float24(PS_INPUT input) : SV_Depth
+{
+	// Truncates depth value to 24bits
+	uint d = uint(sample_c(input.t).r * exp2(32.0f)) & 0xFFFFFFu;
+	return float(d) * exp2(-32.0f);
+}
+
 float ps_convert_rgba8_float32(PS_INPUT input) : SV_Depth
 {
-	// Convert a RRGBA texture into a float depth texture
-	uint4 c = uint4(sample_c(input.t) * 255.0f + 0.5f);
-	return float(c.r | (c.g << 8) | (c.b << 16) | (c.a << 24)) * exp2(-32.0f);
+	// Convert an RGBA texture into a float depth texture
+	return rgba8_to_depth32(sample_c(input.t));
 }
 
 float ps_convert_rgba8_float24(PS_INPUT input) : SV_Depth
 {
 	// Same as above but without the alpha channel (24 bits Z)
 
-	// Convert a RRGBA texture into a float depth texture
-	uint3 c = uint3(sample_c(input.t).rgb * 255.0f + 0.5f);
-	return float(c.r | (c.g << 8) | (c.b << 16)) * exp2(-32.0f);
+	// Convert an RGBA texture into a float depth texture
+	return rgba8_to_depth24(sample_c(input.t));
 }
 
 float ps_convert_rgba8_float16(PS_INPUT input) : SV_Depth
 {
 	// Same as above but without the A/B channels (16 bits Z)
 
-	// Convert a RRGBA texture into a float depth texture
-	uint2 c = uint2(sample_c(input.t).rg * 255.0f + 0.5f);
-	return float(c.r | (c.g << 8)) * exp2(-32.0f);
+	// Convert an RGBA texture into a float depth texture
+	return rgba8_to_depth16(sample_c(input.t));
 }
 
 float ps_convert_rgb5a1_float16(PS_INPUT input) : SV_Depth
 {
-	// Convert a RGB5A1 (saved as RGBA8) color to a 16 bit Z
-	uint4 c = uint4(sample_c(input.t) * 255.0f + 0.5f);
-	return float(((c.r & 0xF8u) >> 3) | ((c.g & 0xF8u) << 2) | ((c.b & 0xF8u) << 7) | ((c.a & 0x80u) << 8)) * exp2(-32.0f);
+	// Convert an RGB5A1 (saved as RGBA8) color to a 16 bit Z
+	return rgb5a1_to_depth16(sample_c(input.t));
+}
+
+#define SAMPLE_RGBA_DEPTH_BILN(CONVERT_FN) \
+	uint width, height; \
+	Texture.GetDimensions(width, height); \
+	float2 top_left_f = input.t * float2(width, height) - 0.5f; \
+	int2 top_left = int2(floor(top_left_f)); \
+	int4 coords = clamp(int4(top_left, top_left + 1), int4(0, 0, 0, 0), int2(width - 1, height - 1).xyxy); \
+	float2 mix_vals = frac(top_left_f); \
+	float depthTL = CONVERT_FN(Texture.Load(int3(coords.xy, 0))); \
+	float depthTR = CONVERT_FN(Texture.Load(int3(coords.zy, 0))); \
+	float depthBL = CONVERT_FN(Texture.Load(int3(coords.xw, 0))); \
+	float depthBR = CONVERT_FN(Texture.Load(int3(coords.zw, 0))); \
+	return lerp(lerp(depthTL, depthTR, mix_vals.x), lerp(depthBL, depthBR, mix_vals.x), mix_vals.y);
+
+float ps_convert_rgba8_float32_biln(PS_INPUT input) : SV_Depth
+{
+	// Convert an RGBA texture into a float depth texture
+	SAMPLE_RGBA_DEPTH_BILN(rgba8_to_depth32);
+}
+
+float ps_convert_rgba8_float24_biln(PS_INPUT input) : SV_Depth
+{
+	// Same as above but without the alpha channel (24 bits Z)
+
+	// Convert an RGBA texture into a float depth texture
+	SAMPLE_RGBA_DEPTH_BILN(rgba8_to_depth24);
+}
+
+float ps_convert_rgba8_float16_biln(PS_INPUT input) : SV_Depth
+{
+	// Same as above but without the A/B channels (16 bits Z)
+
+	// Convert an RGBA texture into a float depth texture
+	SAMPLE_RGBA_DEPTH_BILN(rgba8_to_depth16);
+}
+
+float ps_convert_rgb5a1_float16_biln(PS_INPUT input) : SV_Depth
+{
+	// Convert an RGB5A1 (saved as RGBA8) color to a 16 bit Z
+	SAMPLE_RGBA_DEPTH_BILN(rgb5a1_to_depth16);
 }
 
 PS_OUTPUT ps_convert_rgba_8i(PS_INPUT input)
 {
 	PS_OUTPUT output;
-
-	// Potential speed optimization. There is a high probability that
-	// game only want to extract a single channel (blue). It will allow
-	// to remove most of the conditional operation and yield a +2/3 fps
-	// boost on MGS3
-	//
-	// Hypothesis wrong in Prince of Persia ... Seriously WTF !
-	//#define ONLY_BLUE;
 
 	// Convert a RGBA texture into a 8 bits packed texture
 	// Input column: 8x2 RGBA pixels
@@ -215,73 +326,72 @@ PS_OUTPUT ps_convert_rgba_8i(PS_INPUT input)
 	// 1: 8 R | 8 B
 	// 2: 8 G | 8 A
 	// 3: 8 G | 8 A
-	float c;
+	uint2 pos = uint2(input.p.xy);
 
-	uint2 sel = uint2(input.p.xy) % uint2(16u, 16u);
-	int2  tb  = ((int2(input.p.xy) & ~int2(15, 3)) >> 1);
+	// Collapse separate R G B A areas into their base pixel
+	uint2 block = (pos & ~uint2(15u, 3u)) >> 1;
+	uint2 subblock = pos & uint2(7u, 1u);
+	uint2 coord = block | subblock;
 
-	int ty   = tb.y | (int(input.p.y) & 1);
-	int txN  = tb.x | (int(input.p.x) & 7);
-	int txH  = tb.x | ((int(input.p.x) + 4) & 7);
+	// Compensate for potentially differing page pitch.
+	uint SBW = uint(EMODA);
+	uint DBW = uint(EMODC);
+	uint2 block_xy = coord / uint2(64, 32);
+	uint block_num = (block_xy.y * (DBW / 128)) + block_xy.x;
+	uint2 block_offset = uint2((block_num % (SBW / 64)) * 64, (block_num / (SBW / 64)) * 32);
+	coord = (coord % uint2(64, 32)) + block_offset;
 
-	txN *= PS_SCALE_FACTOR;
-	txH *= PS_SCALE_FACTOR;
-	ty  *= PS_SCALE_FACTOR;
+	// Apply offset to cols 1 and 2
+	uint is_col23 = pos.y & 4u;
+	uint is_col13 = pos.y & 2u;
+	uint is_col12 = is_col23 ^ (is_col13 << 1);
+	coord.x ^= is_col12; // If cols 1 or 2, flip bit 3 of x
 
-	// TODO investigate texture gather
-	float4 cN = Texture.Load(int3(txN, ty, 0));
-	float4 cH = Texture.Load(int3(txH, ty, 0));
-
-
-	if ((sel.y & 4u) == 0u)
-	{
-#ifdef ONLY_BLUE
-		c = cN.b;
-#else
-		// Column 0 and 2
-		if ((sel.y & 3u) < 2u)
-		{
-			// First 2 lines of the col
-			if (sel.x < 8u)
-				c = cN.r;
-			else
-				c = cN.b;
-		}
-		else
-		{
-			if (sel.x < 8u)
-				c = cH.g;
-			else
-				c = cH.a;
-		}
-#endif
-	}
+	float ScaleFactor = BGColor.x;
+	if (floor(ScaleFactor) != ScaleFactor)
+		coord = uint2(float2(coord) * ScaleFactor);
 	else
-	{
-#ifdef ONLY_BLUE
-		c = cH.b;
-#else
-		// Column 1 and 3
-		if ((sel.y & 3u) < 2u)
-		{
-			// First 2 lines of the col
-			if (sel.x < 8u)
-				c = cH.r;
-			else
-				c = cH.b;
-		}
-		else
-		{
-			if (sel.x < 8u)
-				c = cN.g;
-			else
-				c = cN.a;
-		}
-#endif
-	}
+		coord *= uint(ScaleFactor);
 
-	output.c = (float4)(c); // Divide by something here?
+	float4 pixel = Texture.Load(int3(int2(coord), 0));
+	float2 sel0 = (pos.y & 2u) == 0u ? pixel.rb : pixel.ga;
+	float  sel1 = (pos.x & 8u) == 0u ? sel0.x : sel0.y;
+	output.c = (float4)(sel1); // Divide by something here?
+	return output;
+}
 
+PS_OUTPUT ps_convert_clut_4(PS_INPUT input)
+{
+	// Borrowing the YUV constant buffer.
+	float scale = BGColor.x;
+	uint2 offset = uint2(uint(EMODA), uint(EMODC)) + uint(DOFFSET);
+
+	// CLUT4 is easy, just two rows of 8x8.
+	uint index = uint(input.p.x);
+	uint2 pos = uint2(index % 8u, index / 8u);
+
+	int2 final = int2(floor(float2(offset + pos) * scale));
+	PS_OUTPUT output;
+	output.c = Texture.Load(int3(final, 0), 0);
+	return output;
+}
+
+PS_OUTPUT ps_convert_clut_8(PS_INPUT input)
+{
+	float scale = BGColor.x;
+	uint2 offset = uint2(uint(EMODA), uint(EMODC));
+	uint index = min(uint(input.p.x) + uint(DOFFSET), 255u);
+
+	// CLUT is arranged into 8 groups of 16x2, with the top-right and bottom-left quadrants swapped.
+	// This can probably be done better..
+	uint subgroup = (index / 8u) % 4u;
+	uint2 pos;
+	pos.x = (index % 8u) + ((subgroup >= 2u) ? 8u : 0u);
+	pos.y = ((index / 32u) * 2u) + (subgroup % 2u);
+
+	int2 final = int2(floor(float2(offset + pos) * scale));
+	PS_OUTPUT output;
+	output.c = Texture.Load(int3(final, 0), 0);
 	return output;
 }
 
@@ -353,4 +463,24 @@ float ps_stencil_image_init_1(PS_INPUT input) : SV_Target
 	return c;
 }
 
-#endif
+float ps_stencil_image_init_2(PS_INPUT input)
+	: SV_Target
+{
+	float c;
+	if ((254.5f / 255.0f) < sample_c(input.t).a) // < 0x80 pass (== 0x80 should not pass)
+		c = float(-1);
+	else
+		c = float(0x7FFFFFFF);
+	return c;
+}
+
+float ps_stencil_image_init_3(PS_INPUT input)
+	: SV_Target
+{
+	float c;
+	if (sample_c(input.t).a < (254.5f / 255.0f)) // >= 0x80 pass
+		c = float(-1);
+	else
+		c = float(0x7FFFFFFF);
+	return c;
+}

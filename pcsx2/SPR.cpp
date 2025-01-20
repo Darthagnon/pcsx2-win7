@@ -1,19 +1,6 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
 #include "Common.h"
 
 #include "SPR.h"
@@ -179,15 +166,15 @@ int  _SPR0chain()
 
 __fi void SPR0chain()
 {
-	int cycles = _SPR0chain() * BIAS;
+	const int cycles = _SPR0chain() * BIAS;
 	CPU_INT(DMAC_FROM_SPR, cycles);
 }
 
 void _SPR0interleave()
 {
 	int qwc = spr0ch.qwc;
-	int sqwc = dmacRegs.sqwc.SQWC;
 	int tqwc = dmacRegs.sqwc.TQWC;
+	const int sqwc = dmacRegs.sqwc.SQWC;
 	tDMA_TAG *pMem;
 
 	if (tqwc == 0) tqwc = qwc;
@@ -414,8 +401,8 @@ __fi void SPR1chain()
 void _SPR1interleave()
 {
 	int qwc = spr1ch.qwc;
-	int sqwc = dmacRegs.sqwc.SQWC;
 	int tqwc =  dmacRegs.sqwc.TQWC;
+	const int sqwc = dmacRegs.sqwc.SQWC;
 	tDMA_TAG *pMem;
 
 	if (tqwc == 0) tqwc = qwc;
@@ -541,11 +528,14 @@ void SPRTOinterrupt()
 	hwDmacIrq(DMAC_TO_SPR);
 }
 
-void SaveStateBase::sprFreeze()
+bool SaveStateBase::sprFreeze()
 {
-	FreezeTag("SPRdma");
+	if (!FreezeTag("SPRdma"))
+		return false;
 
 	Freeze(spr0finished);
 	Freeze(spr1finished);
 	Freeze(mfifotransferred);
+
+	return IsOkay();
 }

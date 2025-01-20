@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2015  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -21,42 +9,23 @@
 
 namespace Perf
 {
-
-	struct Info
+	class Group
 	{
-		uptr m_x86;
-		u32 m_size;
-		char m_symbol[20];
-		// The idea is to keep static zones that are set only
-		// once.
-		bool m_dynamic;
-
-		Info(uptr x86, u32 size, const char* symbol);
-		Info(uptr x86, u32 size, const char* symbol, u32 pc);
-		void Print(FILE* fp);
-	};
-
-	class InfoVector
-	{
-		std::vector<Info> m_v;
-		char m_prefix[20];
-		unsigned int m_vtune_id;
+		const char* m_prefix;
 
 	public:
-		InfoVector(const char* prefix);
+		constexpr Group(const char* prefix) : m_prefix(prefix) {}
+		bool HasPrefix() const { return (m_prefix && m_prefix[0]); }
 
-		void print(FILE* fp);
-		void map(uptr x86, u32 size, const char* symbol);
-		void map(uptr x86, u32 size, u32 pc);
-		void reset();
+		void Register(const void* ptr, size_t size, const char* symbol);
+		void RegisterPC(const void* ptr, size_t size, u32 pc);
+		void RegisterKey(const void* ptr, size_t size, const char* prefix, u64 key);
 	};
 
-	void dump();
-	void dump_and_reset();
-
-	extern InfoVector any;
-	extern InfoVector ee;
-	extern InfoVector iop;
-	extern InfoVector vu;
-	extern InfoVector vif;
+	extern Group any;
+	extern Group ee;
+	extern Group iop;
+	extern Group vu0;
+	extern Group vu1;
+	extern Group vif;
 } // namespace Perf

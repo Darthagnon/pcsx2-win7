@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
@@ -123,12 +111,18 @@ namespace x86Emitter
 	{
 		pxAssert(prefix == 0 || prefix == 0x66 || prefix == 0xF3 || prefix == 0xF2);
 
-		const xRegisterInt& reg = param1.IsReg() ? param1 : param2;
+		const xRegisterBase& reg = param1.IsReg() ? param1 : param2;
 
 		u8 nR = reg.IsExtended() ? 0x00 : 0x80;
-		u8 L = reg.IsWideSIMD() ? 4 : 0;
+		u8 L;
 
-		u8 nv = (~param2.GetId() & 0xF) << 3;
+		// Needed for 256-bit movemask.
+		if constexpr (std::is_same_v<T3, xRegisterSSE>)
+			L = param3.IsWideSIMD() ? 4 : 0;
+		else
+			L = reg.IsWideSIMD() ? 4 : 0;
+
+		u8 nv = (param2.IsEmpty() ? 0xF : ((~param2.GetId() & 0xF))) << 3;
 
 		u8 p =
 			prefix == 0xF2 ? 3 :

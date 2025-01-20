@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 #include "common/Threading.h"
@@ -33,9 +21,9 @@ class VU_Thread final {
 
 	u32 buffer[buffer_size];
 	// Note: keep atomic on separate cache line to avoid CPU conflict
-	alignas(64) std::atomic<int> m_ato_read_pos; // Only modified by VU thread
-	alignas(64) std::atomic<int> m_ato_write_pos;    // Only modified by EE thread
-	alignas(64) int  m_read_pos; // temporary read pos (local to the VU thread)
+	alignas(__cachelinesize) std::atomic<int> m_ato_read_pos; // Only modified by VU thread
+	alignas(__cachelinesize) std::atomic<int> m_ato_write_pos;    // Only modified by EE thread
+	alignas(__cachelinesize) int  m_read_pos; // temporary read pos (local to the VU thread)
 	int  m_write_pos; // temporary write pos (local to the EE thread)
 	Threading::WorkSema semaEvent;
 	std::atomic_bool m_shutdown_flag{false};
@@ -45,7 +33,7 @@ class VU_Thread final {
 public:
 	alignas(16)  vifStruct        vif;
 	alignas(16)  VIFregisters     vifRegs;
-	Threading::KernelSemaphore semaXGkick;
+	Threading::UserspaceSemaphore semaXGkick;
 	std::atomic<unsigned int> vuCycles[4]; // Used for VU cycle stealing hack
 	u32 vuCycleIdx;  // Used for VU cycle stealing hack
 	u32 vuFBRST;
@@ -66,6 +54,9 @@ public:
 	~VU_Thread();
 
 	__fi const Threading::ThreadHandle& GetThreadHandle() const { return m_thread; }
+
+	/// Returns true if the VU thread has been started.
+	__fi bool IsOpen() const { return m_thread.Joinable(); }
 
 	/// Ensures the VU thread is started.
 	void Open();
@@ -88,18 +79,18 @@ public:
 
 	void ExecuteVU(u32 vu_addr, u32 vif_top, u32 vif_itop, u32 fbrst);
 
-	void VifUnpack(vifStruct& _vif, VIFregisters& _vifRegs, u8* data, u32 size);
+	void VifUnpack(vifStruct& _vif, VIFregisters& _vifRegs, const u8* data, u32 size);
 
 	// Writes to VU's Micro Memory (size in bytes)
-	void WriteMicroMem(u32 vu_micro_addr, void* data, u32 size);
+	void WriteMicroMem(u32 vu_micro_addr, const void* data, u32 size);
 
 	// Writes to VU's Data Memory (size in bytes)
-	void WriteDataMem(u32 vu_data_addr, void* data, u32 size);
+	void WriteDataMem(u32 vu_data_addr, const void* data, u32 size);
 
 	void WriteVIRegs(REG_VI* viRegs);
 
 	void WriteVFRegs(VECTOR* vfRegs);
-	
+
 	void WriteCol(vifStruct& _vif);
 
 	void WriteRow(vifStruct& _vif);
@@ -123,7 +114,7 @@ private:
 	void ReadRegs(VIFregisters* dest);
 
 	void Write(u32 val);
-	void Write(void* src, u32 size);
+	void Write(const void* src, u32 size);
 	void WriteRegs(VIFregisters* src);
 
 	u32 Get_vuCycles();

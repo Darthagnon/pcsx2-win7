@@ -1,22 +1,11 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 // clang-format off
 
-#include "PrecompiledHeader.h"
 #include "GSTables.h"
+
+#include <array>
 
 template <int Width, int Height>
 static constexpr GSSizedBlockSwizzleTable<Height, Width> makeSwizzleTable(const u8 (&arr)[Height][Width]) {
@@ -35,14 +24,6 @@ static constexpr u8 _blockTable32[4][8] =
 	{  2,  3,  6,  7, 18, 19, 22, 23},
 	{  8,  9, 12, 13, 24, 25, 28, 29},
 	{ 10, 11, 14, 15, 26, 27, 30, 31}
-};
-
-static constexpr u8 _blockTable32Z[4][8] =
-{
-	{ 24, 25, 28, 29,  8,  9, 12, 13},
-	{ 26, 27, 30, 31, 10, 11, 14, 15},
-	{ 16, 17, 20, 21,  0,  1,  4,  5},
-	{ 18, 19, 22, 23,  2,  3,  6,  7}
 };
 
 static constexpr u8 _blockTable16[8][4] =
@@ -69,30 +50,6 @@ static constexpr u8 _blockTable16S[8][4] =
 	{ 13, 15, 29, 31 }
 };
 
-static constexpr u8 _blockTable16Z[8][4] =
-{
-	{ 24, 26, 16, 18 },
-	{ 25, 27, 17, 19 },
-	{ 28, 30, 20, 22 },
-	{ 29, 31, 21, 23 },
-	{  8, 10,  0,  2 },
-	{  9, 11,  1,  3 },
-	{ 12, 14,  4,  6 },
-	{ 13, 15,  5,  7 }
-};
-
-static constexpr u8 _blockTable16SZ[8][4] =
-{
-	{ 24, 26,  8, 10 },
-	{ 25, 27,  9, 11 },
-	{ 16, 18,  0,  2 },
-	{ 17, 19,  1,  3 },
-	{ 28, 30, 12, 14 },
-	{ 29, 31, 13, 15 },
-	{ 20, 22,  4,  6 },
-	{ 21, 23,  5,  7 }
-};
-
 static constexpr u8 _blockTable8[4][8] =
 {
 	{  0,  1,  4,  5, 16, 17, 20, 21},
@@ -114,11 +71,8 @@ static constexpr u8 _blockTable4[8][4] =
 };
 
 constexpr GSSizedBlockSwizzleTable<4, 8> blockTable32   = makeSwizzleTable(_blockTable32);
-constexpr GSSizedBlockSwizzleTable<4, 8> blockTable32Z  = makeSwizzleTable(_blockTable32Z);
 constexpr GSSizedBlockSwizzleTable<8, 4> blockTable16   = makeSwizzleTable(_blockTable16);
 constexpr GSSizedBlockSwizzleTable<8, 4> blockTable16S  = makeSwizzleTable(_blockTable16S);
-constexpr GSSizedBlockSwizzleTable<8, 4> blockTable16Z  = makeSwizzleTable(_blockTable16Z);
-constexpr GSSizedBlockSwizzleTable<8, 4> blockTable16SZ = makeSwizzleTable(_blockTable16SZ);
 constexpr GSSizedBlockSwizzleTable<4, 8> blockTable8    = makeSwizzleTable(_blockTable8);
 constexpr GSSizedBlockSwizzleTable<8, 4> blockTable4    = makeSwizzleTable(_blockTable4);
 
@@ -328,36 +282,27 @@ constexpr GSSizedPixelRowOffsetTable<BlocksWide * ColWidth> makeRowOffsetTable(c
 }
 
 constexpr GSPixelColOffsetTable< 32> pixelColOffset32   = makeColOffsetTable(_blockTable32,   columnTable32);
-constexpr GSPixelColOffsetTable< 32> pixelColOffset32Z  = makeColOffsetTable(_blockTable32Z,  columnTable32);
 constexpr GSPixelColOffsetTable< 64> pixelColOffset16   = makeColOffsetTable(_blockTable16,   columnTable16);
 constexpr GSPixelColOffsetTable< 64> pixelColOffset16S  = makeColOffsetTable(_blockTable16S,  columnTable16);
-constexpr GSPixelColOffsetTable< 64> pixelColOffset16Z  = makeColOffsetTable(_blockTable16Z,  columnTable16);
-constexpr GSPixelColOffsetTable< 64> pixelColOffset16SZ = makeColOffsetTable(_blockTable16SZ, columnTable16);
 constexpr GSPixelColOffsetTable< 64> pixelColOffset8    = makeColOffsetTable(_blockTable8,    columnTable8);
 constexpr GSPixelColOffsetTable<128> pixelColOffset4    = makeColOffsetTable(_blockTable4,    columnTable4);
 // These can't be constexpr due to a GCC bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=99901
-CONSTINIT const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset32   = makeRowOffsetTable(_blockTable32,   columnTable32, 0);
-CONSTINIT const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset32Z  = makeRowOffsetTable(_blockTable32Z,  columnTable32, 0);
-CONSTINIT const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset16   = makeRowOffsetTable(_blockTable16,   columnTable16, 0);
-CONSTINIT const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset16S  = makeRowOffsetTable(_blockTable16S,  columnTable16, 0);
-CONSTINIT const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset16Z  = makeRowOffsetTable(_blockTable16Z,  columnTable16, 0);
-CONSTINIT const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset16SZ = makeRowOffsetTable(_blockTable16SZ, columnTable16, 0);
-CONSTINIT const GSSizedPixelRowOffsetTable<128> GSTables::_pixelRowOffset8[2] =
+constinit const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset32   = makeRowOffsetTable(_blockTable32,   columnTable32, 0);
+constinit const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset16   = makeRowOffsetTable(_blockTable16,   columnTable16, 0);
+constinit const GSSizedPixelRowOffsetTable< 64> GSTables::_pixelRowOffset16S  = makeRowOffsetTable(_blockTable16S,  columnTable16, 0);
+constinit const GSSizedPixelRowOffsetTable<128> GSTables::_pixelRowOffset8[2] =
 {
 	makeRowOffsetTable(_blockTable8, columnTable8, 0),
 	makeRowOffsetTable(_blockTable8, columnTable8, 2),
 };
-CONSTINIT const GSSizedPixelRowOffsetTable<128> GSTables::_pixelRowOffset4[2] =
+constinit const GSSizedPixelRowOffsetTable<128> GSTables::_pixelRowOffset4[2] =
 {
 	makeRowOffsetTable(_blockTable4, columnTable4, 0),
 	makeRowOffsetTable(_blockTable4, columnTable4, 2),
 };
 
 constexpr GSPixelRowOffsetTableList< 64, 0> GSTables::pixelRowOffset32;
-constexpr GSPixelRowOffsetTableList< 64, 0> GSTables::pixelRowOffset32Z;
 constexpr GSPixelRowOffsetTableList< 64, 0> GSTables::pixelRowOffset16;
 constexpr GSPixelRowOffsetTableList< 64, 0> GSTables::pixelRowOffset16S;
-constexpr GSPixelRowOffsetTableList< 64, 0> GSTables::pixelRowOffset16Z;
-constexpr GSPixelRowOffsetTableList< 64, 0> GSTables::pixelRowOffset16SZ;
 constexpr GSPixelRowOffsetTableList<128, 7> GSTables::pixelRowOffset8;
 constexpr GSPixelRowOffsetTableList<128, 7> GSTables::pixelRowOffset4;

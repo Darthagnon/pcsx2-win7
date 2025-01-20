@@ -1,20 +1,6 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-
-#include "PrecompiledHeader.h"
 #include "Common.h"
 
 #include "VUmicro.h"
@@ -81,7 +67,7 @@ static void _vu1Exec(VURegs* VU)
 	VU1regs_UPPER_OPCODE[VU->code & 0x3f](&uregs);
 
 	u32 cyclesBeforeOp = VU1.cycle-1;
-	
+
 	_vuTestUpperStalls(VU, &uregs);
 
 	/* check upper flags */
@@ -217,7 +203,7 @@ static void _vu1Exec(VURegs* VU)
 				VU1.xgkicklastcycle = cpuRegs.cycle;
 		}
 	}
-	
+
 	// Progress the write position of the FMAC pipeline by one place
 	if (uregs.pipe == VUPIPE_FMAC || lregs.pipe == VUPIPE_FMAC)
 		VU->fmacwritepos = (VU->fmacwritepos + 1) & 3;
@@ -240,6 +226,8 @@ void vu1Exec(VURegs* VU)
 		DbgCon.Error("VF[0].w != 1.0!!!!\n");
 }
 
+InterpVU1 CpuIntVU1;
+
 InterpVU1::InterpVU1()
 {
 	m_Idx = 1;
@@ -255,12 +243,6 @@ void InterpVU1::Reset()
 	VU1.ialuwritepos = 0;
 	VU1.ialureadpos = 0;
 	VU1.ialucount = 0;
-	vu1Thread.WaitVU();
-}
-
-void InterpVU1::Shutdown() noexcept
-{
-	vu1Thread.WaitVU();
 }
 
 void InterpVU1::SetStartPC(u32 startPC)
@@ -276,8 +258,7 @@ void InterpVU1::Step()
 
 void InterpVU1::Execute(u32 cycles)
 {
-	const int originalRounding = fegetround();
-	fesetround(g_sseVUMXCSR.RoundingControl << 8);
+	const FPControlRegisterBackup fpcr_backup(EmuConfig.Cpu.VU1FPCR);
 
 	VU1.VI[REG_TPC].UL <<= 3;
 	u32 startcycles = VU1.cycle;
@@ -297,5 +278,4 @@ void InterpVU1::Execute(u32 cycles)
 	}
 	VU1.VI[REG_TPC].UL >>= 3;
 	VU1.nextBlockCycles = (VU1.cycle - cpuRegs.cycle) + 1;
-	fesetround(originalRounding);
 }

@@ -1,81 +1,53 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
-#include "Global.h"
-#include "spu2.h"
-#include "Dma.h"
-#ifndef PCSX2_CORE
-#if defined(_WIN32)
-#include "Windows/Dialogs.h"
-#else // BSD, Macos
-#include "Linux/Dialogs.h"
-#include "Linux/Config.h"
-#endif
-#else
-#include "Host/Dialogs.h"
-#endif
+#include "SPU2/spu2.h"
+#include "SPU2/defs.h"
+#include "SPU2/Debug.h"
+#include "SPU2/Dma.h"
+#include "Host/AudioStream.h"
+#include "Host.h"
+#include "GS/GSCapture.h"
+#include "MTGS.h"
 #include "R3000A.h"
+#include "VMManager.h"
 
-using namespace Threading;
+#include "common/Error.h"
 
-std::recursive_mutex mtx_SPU2Status;
+const StereoOut32 StereoOut32::Empty(0, 0);
 
-static int ConsoleSampleRate = 48000;
-int SampleRate = 48000;
-
-static double DeviceSampleRateMultiplier = 1.0;
-
-static bool IsOpened = false;
-static bool IsInitialized = false;
+namespace SPU2
+{
+	static void CreateOutputStream();
+	static void UpdateSampleRate();
+	static float GetNominalRate();
+	static void InternalReset(bool psxmode);
+} // namespace SPU2
 
 u32 lClocks = 0;
 
-#ifndef PCSX2_CORE
-#include "gui/AppCoreThread.h"
+static bool s_audio_capture_active = false;
+static bool s_psxmode = false;
 
-void SPU2configure()
+static std::unique_ptr<AudioStream> s_output_stream;
+static std::array<s16, AudioStream::CHUNK_SIZE * 2> s_current_chunk;
+static u32 s_current_chunk_pos;
+
+u32 SPU2::GetConsoleSampleRate()
 {
-	ScopedCoreThreadPause paused_core(SystemsMask::System_SPU2);
-
-	configure();
-	paused_core.AllowResume();
+	return s_psxmode ? PSX_SAMPLE_RATE : SAMPLE_RATE;
 }
-
-#endif
 
 // --------------------------------------------------------------------------------------
 //  DMA 4/7 Callbacks from Core Emulator
 // --------------------------------------------------------------------------------------
 
 
-void SPU2setSettingsDir(const char* dir)
-{
-	CfgSetSettingsDir(dir);
-}
-
-void SPU2setLogDir(const char* dir)
-{
-	CfgSetLogDir(dir);
-}
-
 void SPU2readDMA4Mem(u16* pMem, u32 size) // size now in 16bit units
 {
 	TimeUpdate(psxRegs.cycle);
 
-	FileLog("[%10d] SPU2 readDMA4Mem size %x\n", Cycles, size << 1);
+	SPU2::FileLog("[%10d] SPU2 readDMA4Mem size %x\n", Cycles, size << 1);
 	Cores[0].DoDMAread(pMem, size);
 }
 
@@ -83,14 +55,14 @@ void SPU2writeDMA4Mem(u16* pMem, u32 size) // size now in 16bit units
 {
 	TimeUpdate(psxRegs.cycle);
 
-	FileLog("[%10d] SPU2 writeDMA4Mem size %x at address %x\n", Cycles, size << 1, Cores[0].TSA);
+	SPU2::FileLog("[%10d] SPU2 writeDMA4Mem size %x at address %x\n", Cycles, size << 1, Cores[0].TSA);
 
 	Cores[0].DoDMAwrite(pMem, size);
 }
 
 void SPU2interruptDMA4()
 {
-	FileLog("[%10d] SPU2 interruptDMA4\n", Cycles);
+	SPU2::FileLog("[%10d] SPU2 interruptDMA4\n", Cycles);
 	if (Cores[0].DmaMode)
 		Cores[0].Regs.STATX |= 0x80;
 	Cores[0].Regs.STATX &= ~0x400;
@@ -99,7 +71,7 @@ void SPU2interruptDMA4()
 
 void SPU2interruptDMA7()
 {
-	FileLog("[%10d] SPU2 interruptDMA7\n", Cycles);
+	SPU2::FileLog("[%10d] SPU2 interruptDMA7\n", Cycles);
 	if (Cores[1].DmaMode)
 		Cores[1].Regs.STATX |= 0x80;
 	Cores[1].Regs.STATX &= ~0x400;
@@ -110,7 +82,7 @@ void SPU2readDMA7Mem(u16* pMem, u32 size)
 {
 	TimeUpdate(psxRegs.cycle);
 
-	FileLog("[%10d] SPU2 readDMA7Mem size %x\n", Cycles, size << 1);
+	SPU2::FileLog("[%10d] SPU2 readDMA7Mem size %x\n", Cycles, size << 1);
 	Cores[1].DoDMAread(pMem, size);
 }
 
@@ -118,51 +90,94 @@ void SPU2writeDMA7Mem(u16* pMem, u32 size)
 {
 	TimeUpdate(psxRegs.cycle);
 
-	FileLog("[%10d] SPU2 writeDMA7Mem size %x at address %x\n", Cycles, size << 1, Cores[1].TSA);
+	SPU2::FileLog("[%10d] SPU2 writeDMA7Mem size %x at address %x\n", Cycles, size << 1, Cores[1].TSA);
 
 	Cores[1].DoDMAwrite(pMem, size);
 }
 
-static void SPU2InitSndBuffer()
+void SPU2::CreateOutputStream()
 {
-	Console.WriteLn("Initializing SndBuffer at sample rate of %u...", SampleRate);
-	if (SndBuffer::Init())
-		return;
+	// Persist volume through stream recreates.
+	const u32 volume = s_output_stream ? s_output_stream->GetOutputVolume() : GetResetVolume();
+	const u32 sample_rate = GetConsoleSampleRate();
+	s_output_stream.reset();
 
-	if (SampleRate != ConsoleSampleRate)
+	Error error;
+	s_output_stream = AudioStream::CreateStream(EmuConfig.SPU2.Backend, sample_rate, EmuConfig.SPU2.StreamParameters,
+		EmuConfig.SPU2.DriverName.c_str(), EmuConfig.SPU2.DeviceName.c_str(), EmuConfig.SPU2.IsTimeStretchEnabled(), &error);
+	if (!s_output_stream)
 	{
-		// TODO: Resample on our side...
-		const int original_sample_rate = SampleRate;
-		Console.Error("Failed to init SPU2 at adjusted sample rate %u, trying console rate.", SampleRate);
-		SampleRate = ConsoleSampleRate;
-		if (SndBuffer::Init())
-			return;
+		Host::ReportErrorAsync("Error",
+			fmt::format("Failed to create or configure audio stream, falling back to null output. The error was:\n{}",
+				error.GetDescription()));
 
-		SampleRate = original_sample_rate;
+		s_output_stream = AudioStream::CreateNullStream(sample_rate, EmuConfig.SPU2.StreamParameters.buffer_ms);
 	}
 
-	// just use nullout
-	OutputModule = FindOutputModuleById(NullOut->GetIdent());
-	if (!SndBuffer::Init())
-		pxFailRel("Failed to initialize nullout.");
+	s_output_stream->SetOutputVolume(volume);
+	s_output_stream->SetNominalRate(GetNominalRate());
+	s_output_stream->SetPaused(VMManager::GetState() == VMState::Paused);
 }
 
-static void SPU2UpdateSampleRate()
+void SPU2::UpdateSampleRate()
 {
-	const int new_sample_rate = static_cast<int>(std::round(static_cast<double>(ConsoleSampleRate) * DeviceSampleRateMultiplier));
-	if (SampleRate == new_sample_rate)
+	if (s_output_stream && s_output_stream->GetSampleRate() == GetConsoleSampleRate())
 		return;
 
-	SndBuffer::Cleanup();
-	SampleRate = new_sample_rate;
-	SPU2InitSndBuffer();
+	CreateOutputStream();
+
+	// Can't be capturing when the sample rate changes.
+	if (IsAudioCaptureActive())
+	{
+		MTGS::RunOnGSThread(&GSEndCapture);
+		MTGS::WaitGS(false, false, false);
+	}
 }
 
-static void SPU2InternalReset(PS2Modes isRunningPSXMode)
+u32 SPU2::GetOutputVolume()
 {
-	ConsoleSampleRate = (isRunningPSXMode == PS2Modes::PSX) ? 44100 : 48000;
+	return s_output_stream->GetOutputVolume();
+}
 
-	if (isRunningPSXMode == PS2Modes::PS2)
+void SPU2::SetOutputVolume(u32 volume)
+{
+	s_output_stream->SetOutputVolume(volume);
+}
+
+u32 SPU2::GetResetVolume()
+{
+	return EmuConfig.SPU2.OutputMuted ? 0 :
+										((VMManager::GetTargetSpeed() != 1.0f) ?
+												EmuConfig.SPU2.FastForwardVolume :
+												EmuConfig.SPU2.OutputVolume);
+}
+
+float SPU2::GetNominalRate()
+{
+	// Adjust nominal rate when syncing to host.
+	return VMManager::IsTargetSpeedAdjustedToHost() ? VMManager::GetTargetSpeed() : 1.0f;
+}
+
+void SPU2::SetOutputPaused(bool paused)
+{
+	s_output_stream->SetPaused(paused);
+}
+
+void SPU2::SetAudioCaptureActive(bool active)
+{
+	s_audio_capture_active = active;
+}
+
+bool SPU2::IsAudioCaptureActive()
+{
+	return s_audio_capture_active;
+}
+
+void SPU2::InternalReset(bool psxmode)
+{
+	s_current_chunk_pos = 0;
+	s_psxmode = psxmode;
+	if (!s_psxmode)
 	{
 		memset(spu2regs, 0, 0x010000);
 		memset(_spu2mem, 0, 0x200000);
@@ -176,296 +191,123 @@ static void SPU2InternalReset(PS2Modes isRunningPSXMode)
 	}
 }
 
-s32 SPU2reset(PS2Modes isRunningPSXMode)
+void SPU2::Reset(bool psxmode)
 {
-	SPU2InternalReset(isRunningPSXMode);
-	SPU2UpdateSampleRate();
-	return 0;
+	InternalReset(psxmode);
+	UpdateSampleRate();
 }
 
-void SPU2SetDeviceSampleRateMultiplier(double multiplier)
+void SPU2::OnTargetSpeedChanged()
 {
-	if (DeviceSampleRateMultiplier == multiplier)
+	if (!s_output_stream)
 		return;
 
-	DeviceSampleRateMultiplier = multiplier;
-	SPU2UpdateSampleRate();
+	if (!s_output_stream->IsStretchEnabled())
+	{
+		s_output_stream->EmptyBuffer();
+		s_current_chunk_pos = 0;
+	}
+
+	s_output_stream->SetNominalRate(GetNominalRate());
+
+	if (EmuConfig.SPU2.OutputVolume != EmuConfig.SPU2.FastForwardVolume && !EmuConfig.SPU2.OutputMuted)
+		s_output_stream->SetOutputVolume(GetResetVolume());
 }
 
-s32 SPU2init()
+bool SPU2::Open()
 {
-	assert(regtable[0x400] == nullptr);
-
-	if (IsInitialized)
-		return 0;
-
-	IsInitialized = true;
-
-	ReadSettings();
-
-#ifdef SPU2_LOG
-	if (AccessLog())
-	{
-		spu2Log = OpenLog(AccessLogFileName.c_str());
-		setvbuf(spu2Log, nullptr, _IONBF, 0);
-		FileLog("SPU2init\n");
-	}
+#ifdef PCSX2_DEVBUILD
+	if (SPU2::AccessLog())
+		SPU2::OpenFileLog();
 #endif
-	srand((unsigned)time(nullptr));
 
-	spu2regs = (s16*)malloc(0x010000);
-	_spu2mem = (s16*)malloc(0x200000);
-
-	// adpcm decoder cache:
-	//  the cache data size is determined by taking the number of adpcm blocks
-	//  (2MB / 16) and multiplying it by the decoded block size (28 samples).
-	//  Thus: pcm_cache_data = 7,340,032 bytes (ouch!)
-	//  Expanded: 16 bytes expands to 56 bytes [3.5:1 ratio]
-	//    Resulting in 2MB * 3.5.
-
-	pcm_cache_data = (PcmCacheEntry*)calloc(pcm_BlockCount, sizeof(PcmCacheEntry));
-
-	if ((spu2regs == nullptr) || (_spu2mem == nullptr) || (pcm_cache_data == nullptr))
-	{
-		SysMessage("SPU2: Error allocating Memory\n");
-		return -1;
-	}
-
-	// Patch up a copy of regtable that directly maps "nullptrs" to SPU2 memory.
-
-	memcpy(regtable, regtable_original, sizeof(regtable));
-
-	for (uint mem = 0; mem < 0x800; mem++)
-	{
-		u16* ptr = regtable[mem >> 1];
-		if (!ptr)
-		{
-			regtable[mem >> 1] = &(spu2Ru16(mem));
-		}
-	}
-
-	SPU2InternalReset(PS2Modes::PS2);
-
+#ifdef PCSX2_DEVBUILD
 	DMALogOpen();
-	InitADSR();
-
-	return 0;
-}
-
-#if defined(_MSC_VER) && !defined(PCSX2_CORE)
-// Bit ugly to have this here instead of in RealttimeDebugger.cpp, but meh :p
-extern bool debugDialogOpen;
-extern HWND hDebugDialog;
-
-static INT_PTR CALLBACK DebugProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-	int wmId;
-
-	switch (uMsg)
-	{
-		case WM_PAINT:
-			return FALSE;
-		case WM_INITDIALOG:
-		{
-			debugDialogOpen = true;
-		}
-		break;
-
-		case WM_COMMAND:
-			wmId = LOWORD(wParam);
-			// Parse the menu selections:
-			switch (wmId)
-			{
-				case IDOK:
-				case IDCANCEL:
-					debugDialogOpen = false;
-					EndDialog(hWnd, 0);
-					break;
-				default:
-					return FALSE;
-			}
-			break;
-
-		default:
-			return FALSE;
-	}
-	return TRUE;
-}
-#endif
-uptr gsWindowHandle = 0;
-
-s32 SPU2open()
-{
-	std::unique_lock lock(mtx_SPU2Status);
-	if (IsOpened)
-		return 0;
 
 	FileLog("[%10d] SPU2 Open\n", Cycles);
-
-#if defined(_MSC_VER) && !defined(PCSX2_CORE)
-#ifdef PCSX2_DEVBUILD // Define may not be needed but not tested yet. Better make sure.
-	if (IsDevBuild && VisualDebug())
-	{
-		if (debugDialogOpen == 0)
-		{
-			hDebugDialog = CreateDialogParam(nullptr, MAKEINTRESOURCE(IDD_DEBUG), 0, DebugProc, 0);
-			ShowWindow(hDebugDialog, SW_SHOWNORMAL);
-			debugDialogOpen = 1;
-		}
-	}
-	else if (debugDialogOpen)
-	{
-		DestroyWindow(hDebugDialog);
-		debugDialogOpen = 0;
-	}
-#endif
 #endif
 
-	IsOpened = true;
 	lClocks = psxRegs.cycle;
 
-	try
-	{
-		SampleRate = static_cast<int>(std::round(static_cast<double>(ConsoleSampleRate) * DeviceSampleRateMultiplier));
-		SPU2InitSndBuffer();
+	InternalReset(false);
 
-#if defined(_WIN32) && !defined(PCSX2_CORE)
-		DspLoadLibrary(dspPlugin, dspPluginModule);
+	CreateOutputStream();
+#ifdef PCSX2_DEVBUILD
+	WaveDump::Open();
 #endif
-		WaveDump::Open();
-	}
-	catch (std::exception& ex)
-	{
-		fprintf(stderr, "SPU2 Error: Could not initialize device, or something.\nReason: %s", ex.what());
-		SPU2close();
-		return -1;
-	}
-	return 0;
+
+	return true;
 }
 
-void SPU2close()
+void SPU2::Close()
 {
-	std::unique_lock lock(mtx_SPU2Status);
-	if (!IsOpened)
-		return;
-	IsOpened = false;
-
 	FileLog("[%10d] SPU2 Close\n", Cycles);
 
-#if defined(_WIN32) && !defined(PCSX2_CORE)
-	DspCloseLibrary();
-#endif
+	s_output_stream.reset();
 
-	SndBuffer::Cleanup();
-}
-
-void SPU2shutdown()
-{
-	if (!IsInitialized)
-		return;
-	IsInitialized = false;
-
-	ConLog("* SPU2: Shutting down.\n");
-
-	SPU2close();
-
-	DoFullDump();
-#ifdef STREAM_DUMP
-	fclose(il0);
-	fclose(il1);
-#endif
-#ifdef EFFECTS_DUMP
-	fclose(el0);
-	fclose(el1);
-#endif
+#ifdef PCSX2_DEVBUILD
 	WaveDump::Close();
-
 	DMALogClose();
 
-	safe_free(spu2regs);
-	safe_free(_spu2mem);
-	safe_free(pcm_cache_data);
-
-
-#ifdef SPU2_LOG
-	if (!AccessLog())
-		return;
-	FileLog("[%10d] SPU2shutdown\n", Cycles);
-	if (spu2Log)
-		fclose(spu2Log);
+	DoFullDump();
+	CloseFileLog();
 #endif
 }
 
-void SPU2SetOutputPaused(bool paused)
+bool SPU2::IsRunningPSXMode()
 {
-	SndBuffer::SetPaused(paused);
+	return s_psxmode;
 }
 
-#ifdef DEBUG_KEYS
-static u32 lastTicks;
-static bool lState[6];
-#endif
-
-void SPU2async(u32 cycles)
+void SPU2::CheckForConfigChanges(const Pcsx2Config& old_config)
 {
-	DspUpdate();
+	const Pcsx2Config::SPU2Options& opts = EmuConfig.SPU2;
+	const Pcsx2Config::SPU2Options& oldopts = old_config.SPU2;
 
-	TimeUpdate(psxRegs.cycle);
-
-#ifdef DEBUG_KEYS
-	u32 curTicks = GetTickCount();
-	if ((curTicks - lastTicks) >= 50)
+	// No need to reinit for volume change.
+	if ((opts.OutputVolume != oldopts.OutputVolume && VMManager::GetTargetSpeed() == 1.0f) ||
+		(opts.FastForwardVolume != oldopts.FastForwardVolume && VMManager::GetTargetSpeed() != 1.0f) ||
+		opts.OutputMuted != oldopts.OutputMuted)
 	{
-		int oldI = Interpolation;
-		bool cState[6];
-		for (int i = 0; i < 6; i++)
-		{
-			cState[i] = !!(GetAsyncKeyState(VK_NUMPAD0 + i) & 0x8000);
+		SetOutputVolume(GetResetVolume());
+	}
 
-			if ((cState[i] && !lState[i]) && i != 5)
-				Interpolation = i;
+	// Things which require re-initialzing the output.
+	if (opts.Backend != oldopts.Backend ||
+		opts.StreamParameters != oldopts.StreamParameters ||
+		opts.DriverName != oldopts.DriverName ||
+		opts.DeviceName != oldopts.DeviceName)
+	{
+		CreateOutputStream();
+	}
+	else if (opts.IsTimeStretchEnabled() != oldopts.IsTimeStretchEnabled())
+	{
+		s_output_stream->SetStretchEnabled(opts.IsTimeStretchEnabled());
+	}
 
-			lState[i] = cState[i];
-		}
-
-		if (Interpolation != oldI)
-		{
-			printf("Interpolation set to %d", Interpolation);
-			switch (Interpolation)
-			{
-				case 0:
-					printf(" - Nearest.\n");
-					break;
-				case 1:
-					printf(" - Linear.\n");
-					break;
-				case 2:
-					printf(" - Cubic.\n");
-					break;
-				case 3:
-					printf(" - Hermite.\n");
-					break;
-				case 4:
-					printf(" - Catmull-Rom.\n");
-					break;
-				case 5:
-					printf(" - Gaussian.\n");
-					break;
-				default:
-					printf(" (unknown).\n");
-					break;
-			}
-		}
-
-		lastTicks = curTicks;
+#ifdef PCSX2_DEVBUILD
+	// AccessLog controls file output.
+	if (opts.AccessLog != oldopts.AccessLog)
+	{
+		if (AccessLog())
+			OpenFileLog();
+		else
+			CloseFileLog();
 	}
 #endif
+}
+
+void SPU2async()
+{
+	TimeUpdate(psxRegs.cycle);
 }
 
 u16 SPU2read(u32 rmem)
 {
 	u16 ret = 0xDEAD;
-	u32 core = 0, mem = rmem & 0xFFFF, omem = mem;
+	u32 core = 0;
+	const u32 mem = rmem & 0xFFFF;
+	u32 omem = mem;
 
 	if (mem & 0x400)
 	{
@@ -496,13 +338,16 @@ u16 SPU2read(u32 rmem)
 		else if (mem >= 0x800)
 		{
 			ret = spu2Ru16(mem);
-			ConLog("* SPU2: Read from reg>=0x800: %x value %x\n", mem, ret);
+			if (SPU2::MsgToConsole())
+				SPU2::ConLog("* SPU2: Read from reg>=0x800: %x value %x\n", mem, ret);
 		}
 		else
 		{
 			ret = *(regtable[(mem >> 1)]);
+#ifdef PCSX2_DEVBUILD
 			//FileLog("[%10d] SPU2 read mem %x (core %d, register %x): %x\n",Cycles, mem, core, (omem & 0x7ff), ret);
-			SPU2writeLog("read", rmem, ret);
+			SPU2::WriteRegLog("read", rmem, ret);
+#endif
 		}
 	}
 
@@ -521,21 +366,11 @@ void SPU2write(u32 rmem, u16 value)
 		Cores[0].WriteRegPS1(rmem, value);
 	else
 	{
-		SPU2writeLog("write", rmem, value);
+#ifdef PCSX2_DEVBUILD
+		SPU2::WriteRegLog("write", rmem, value);
+#endif
 		SPU2_FastWrite(rmem, value);
 	}
-}
-
-// returns a non zero value if successful
-bool SPU2setupRecording(const std::string* filename)
-{
-	return RecordStart(filename);
-}
-
-void SPU2endRecording()
-{
-	if (WavRecordEnabled)
-		RecordStop();
 }
 
 s32 SPU2freeze(FreezeAction mode, freezeData* data)
@@ -575,4 +410,20 @@ s32 SPU2freeze(FreezeAction mode, freezeData* data)
 
 	// technically unreachable, but kills a warning:
 	return 0;
+}
+
+__forceinline void spu2Output(StereoOut32 out)
+{
+	// Final clamp, take care not to exceed 16 bits from here on
+	s_current_chunk[s_current_chunk_pos++] = static_cast<s16>(clamp_mix(out.Left));
+	s_current_chunk[s_current_chunk_pos++] = static_cast<s16>(clamp_mix(out.Right));
+	if (s_current_chunk_pos == s_current_chunk.size())
+	{
+		s_current_chunk_pos = 0;
+
+		s_output_stream->WriteChunk(s_current_chunk.data());
+
+		if (SPU2::IsAudioCaptureActive()) [[unlikely]]
+			GSCapture::DeliverAudioPacket(s_current_chunk.data());
+	}
 }

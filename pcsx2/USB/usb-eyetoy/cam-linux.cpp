@@ -1,24 +1,10 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #include "cam-linux.h"
+#include "cam-jpeg.h"
 #include "usb-eyetoy-webcam.h"
-#include "jpgd.h"
-#include "jpge.h"
 #include "jo_mpeg.h"
-#include "USB/gtk.h"
 #include "common/Console.h"
 
 #include <stdio.h>
@@ -71,22 +57,23 @@ namespace usb_eyetoy
 		static void store_mpeg_frame(const unsigned char* data, const unsigned int len)
 		{
 			mpeg_mutex.lock();
-			memcpy(mpeg_buffer.start, data, len);
+			if (len > 0)
+				memcpy(mpeg_buffer.start, data, len);
 			mpeg_buffer.length = len;
 			mpeg_mutex.unlock();
 		}
 
 		static void process_image(const unsigned char* data, int size)
 		{
-			const int bytesPerPixel = 3;
-			int comprBufSize = frame_width * frame_height * bytesPerPixel;
+			constexpr int bytesPerPixel = 3;
+			const size_t comprBufSize = frame_width * frame_height * bytesPerPixel;
 			if (pixelformat == V4L2_PIX_FMT_YUYV)
 			{
-				unsigned char* comprBuf = (unsigned char*)calloc(1, comprBufSize);
-				int comprLen = 0;
+				std::vector<u8> comprBuf(comprBufSize);
 				if (frame_format == format_mpeg)
 				{
-					comprLen = jo_write_mpeg(comprBuf, data, frame_width, frame_height, JO_YUYV, mirroring_enabled ? JO_FLIP_X : JO_NONE, JO_NONE);
+					const size_t comprLen = jo_write_mpeg(comprBuf.data(), data, frame_width, frame_height, JO_YUYV, mirroring_enabled ? JO_FLIP_X : JO_NONE, JO_NONE);
+					comprBuf.resize(comprLen);
 				}
 				else if (frame_format == format_jpeg)
 				{
@@ -118,14 +105,10 @@ namespace usb_eyetoy
 							dst[5] = (b > 255) ? 255 : ((b < 0) ? 0 : b);
 						}
 					}
-					jpge::params params;
-					params.m_quality = 80;
-					params.m_subsampling = jpge::H2V1;
-					comprLen = comprBufSize;
-					if (!jpge::compress_image_to_jpeg_file_in_memory(comprBuf, comprLen, frame_width, frame_height, 3, data2, params))
-					{
-						comprLen = 0;
-					}
+
+					if (!CompressCamJPEG(&comprBuf, data2, frame_width, frame_height, 80))
+						comprBuf.clear();
+
 					free(data2);
 				}
 				else if (frame_format == format_yuv400)
@@ -148,22 +131,26 @@ namespace usb_eyetoy
 										comprBuf[in_pos++] = src[0];//Y
 									}
 								}
-					comprLen = 80 * 64;
+					comprBuf.resize(80 * 64);
 				}
-				store_mpeg_frame(comprBuf, comprLen);
-				free(comprBuf);
+				else
+				{
+					comprBuf.clear();
+				}
+				store_mpeg_frame(comprBuf.data(), static_cast<unsigned int>(comprBuf.size()));
 			}
 			else if (pixelformat == V4L2_PIX_FMT_JPEG)
 			{
 				if (frame_format == format_mpeg)
 				{
-					int width, height, actual_comps;
-					unsigned char* rgbData = jpgd::decompress_jpeg_image_from_memory(data, size, &width, &height, &actual_comps, 3);
-					unsigned char* comprBuf = (unsigned char*)calloc(1, comprBufSize);
-					int comprLen = jo_write_mpeg(comprBuf, rgbData, frame_width, frame_height, JO_RGB24, mirroring_enabled ? JO_FLIP_X : JO_NONE, JO_NONE);
-					free(rgbData);
-					store_mpeg_frame(comprBuf, comprLen);
-					free(comprBuf);
+					std::vector<u8> rgbData;
+					u32 width, height;
+					if (DecompressCamJPEG(&rgbData, &width, &height, data, size))
+					{
+						std::vector<u8> comprBuf(comprBufSize);
+						const size_t comprLen = jo_write_mpeg(comprBuf.data(), rgbData.data(), frame_width, frame_height, JO_RGB24, mirroring_enabled ? JO_FLIP_X : JO_NONE, JO_NONE);
+						store_mpeg_frame(comprBuf.data(), comprLen);
+					}
 				}
 				else if (frame_format == format_jpeg)
 				{
@@ -171,35 +158,35 @@ namespace usb_eyetoy
 				}
 				else if (frame_format == format_yuv400)
 				{
-					int width, height, actual_comps;
-					unsigned char* rgbData = jpgd::decompress_jpeg_image_from_memory(data, size, &width, &height, &actual_comps, 3);
-					unsigned char* comprBuf = (unsigned char*)calloc(1, comprBufSize);
-					int comprLen = 0;
-					int in_pos = 0;
-					for (int my = 0; my < 8; my++)
-						for (int mx = 0; mx < 10; mx++)
-							for (int y = 0; y < 8; y++)
-								for (int x = 0; x < 8; x++)
-								{
-									int srcx = 4* (8*mx + x);
-									int srcy = 4* (8*my + y);
-									unsigned char* src = rgbData + (srcy * frame_width + srcx) * bytesPerPixel;
-									if (srcy >= frame_height)
+					std::vector<u8> rgbData;
+					u32 width, height;
+					if (DecompressCamJPEG(&rgbData, &width, &height, data, size))
+					{
+						const size_t comprLen = 80 * 64;
+						std::vector<u8> comprBuf(comprLen);
+						int in_pos = 0;
+						for (int my = 0; my < 8; my++)
+							for (int mx = 0; mx < 10; mx++)
+								for (int y = 0; y < 8; y++)
+									for (int x = 0; x < 8; x++)
 									{
-										comprBuf[in_pos++] = 0x01;
+										int srcx = 4* (8*mx + x);
+										int srcy = 4* (8*my + y);
+										unsigned char* src = rgbData.data() + (srcy * frame_width + srcx) * bytesPerPixel;
+										if (srcy >= frame_height)
+										{
+											comprBuf[in_pos++] = 0x01;
+										}
+										else
+										{
+											float r = src[0];
+											float g = src[1];
+											float b = src[2];
+											comprBuf[in_pos++] = 0.299f * r + 0.587f * g + 0.114f * b;
+										}
 									}
-									else
-									{
-										float r = src[0];
-										float g = src[1];
-										float b = src[2];
-										comprBuf[in_pos++] = 0.299f * r + 0.587f * g + 0.114f * b;
-									}
-								}
-					comprLen = 80 * 64;
-					free(rgbData);
-					store_mpeg_frame(comprBuf, comprLen);
-					free(comprBuf);
+						store_mpeg_frame(comprBuf.data(), comprLen);
+					}
 				}
 			}
 			else
@@ -242,9 +229,9 @@ namespace usb_eyetoy
 			return 1;
 		}
 
-		std::vector<std::string> getDevList()
+		std::vector<std::pair<std::string, std::string>> getDevList()
 		{
-			std::vector<std::string> devList;
+			std::vector<std::pair<std::string, std::string>> devList;
 			char dev_name[64];
 			int fd;
 			struct v4l2_capability cap;
@@ -260,7 +247,7 @@ namespace usb_eyetoy
 
 				if (ioctl(fd, VIDIOC_QUERYCAP, &cap) >= 0)
 				{
-					devList.push_back((char*)cap.card);
+					devList.emplace_back((char*)cap.card, (char*)cap.card);
 				}
 
 				close(fd);
@@ -268,7 +255,7 @@ namespace usb_eyetoy
 			return devList;
 		}
 
-		static int v4l_open(std::string selectedDevice)
+		static int v4l_open(const std::string& selectedDevice)
 		{
 			char dev_name[64];
 			struct v4l2_capability cap;
@@ -549,8 +536,8 @@ namespace usb_eyetoy
 
 		void create_dummy_frame_eyetoy()
 		{
-			const int bytesPerPixel = 3;
-			int comprBufSize = frame_width * frame_height * bytesPerPixel;
+			constexpr int bytesPerPixel = 3;
+			const int comprBufSize = frame_width * frame_height * bytesPerPixel;
 			unsigned char* rgbData = (unsigned char*)calloc(1, comprBufSize);
 			for (int y = 0; y < frame_height; y++)
 			{
@@ -562,27 +549,25 @@ namespace usb_eyetoy
 					ptr[2] = 255 * y / frame_height;
 				}
 			}
-			unsigned char* comprBuf = (unsigned char*)calloc(1, comprBufSize);
-			int comprLen = 0;
+
+			std::vector<u8> comprBuf(comprBufSize);
 			if (frame_format == format_mpeg)
 			{
-				comprLen = jo_write_mpeg(comprBuf, rgbData, frame_width, frame_height, JO_RGB24, JO_NONE, JO_NONE);
+				const size_t comprLen = jo_write_mpeg(comprBuf.data(), rgbData, frame_width, frame_height, JO_RGB24, JO_NONE, JO_NONE);
+				comprBuf.resize(comprLen);
 			}
 			else if (frame_format == format_jpeg)
 			{
-				jpge::params params;
-				params.m_quality = 80;
-				params.m_subsampling = jpge::H2V1;
-				comprLen = comprBufSize;
-				if (!jpge::compress_image_to_jpeg_file_in_memory(comprBuf, comprLen, frame_width, frame_height, 3, rgbData, params))
-				{
-					comprLen = 0;
-				}
+				if (!CompressCamJPEG(&comprBuf, rgbData, frame_width, frame_height, 80))
+					comprBuf.clear();
+			}
+			else
+			{
+				comprBuf.clear();
 			}
 			free(rgbData);
 
-			store_mpeg_frame(comprBuf, comprLen);
-			free(comprBuf);
+			store_mpeg_frame(comprBuf.data(), static_cast<unsigned int>(comprBuf.size()));	
 		}
 
 		void create_dummy_frame_ov511p()
@@ -603,9 +588,8 @@ namespace usb_eyetoy
 			free(comprBuf);
 		}
 
-		V4L2::V4L2(int port)
+		V4L2::V4L2()
 		{
-			mPort = port;
 			mpeg_buffer.start = calloc(1, 640 * 480 * 2);
 		}
 
@@ -636,9 +620,7 @@ namespace usb_eyetoy
 				pthread_join(eyetoy_thread, NULL);
 				v4l_close();
 			}
-			std::string selectedDevice;
-			LoadSetting(EyeToyWebCamDevice::TypeName(), mPort, APINAME, N_DEVICE, selectedDevice);
-			if (v4l_open(selectedDevice) != 0)
+			if (v4l_open(mHostDevice.c_str()) != 0)
 				return -1;
 			pthread_create(&eyetoy_thread, NULL, &v4l_thread, NULL);
 			eyetoy_running = 1;
@@ -674,76 +656,15 @@ namespace usb_eyetoy
 		{
 			mirroring_enabled = state;
 		}
-
-		static void deviceChanged(GtkComboBox* widget, gpointer data)
-		{
-			*(int*)data = gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
-		}
-
-		int GtkConfigure(int port, const char* dev_type, void* data)
-		{
-			std::string selectedDevice;
-			LoadSetting(dev_type, port, APINAME, N_DEVICE, selectedDevice);
-
-			GtkWidget* dlg = gtk_dialog_new_with_buttons(
-				"V4L2 Settings", GTK_WINDOW(data), GTK_DIALOG_MODAL,
-				GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-				GTK_STOCK_OK, GTK_RESPONSE_OK,
-				NULL);
-			gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER);
-			gtk_window_set_resizable(GTK_WINDOW(dlg), TRUE);
-			gtk_window_set_default_size(GTK_WINDOW(dlg), 320, 75);
-
-			GtkWidget* dlg_area_box = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
-			GtkWidget* main_hbox = gtk_hbox_new(FALSE, 5);
-			gtk_container_add(GTK_CONTAINER(dlg_area_box), main_hbox);
-			GtkWidget* right_vbox = gtk_vbox_new(FALSE, 5);
-			gtk_box_pack_start(GTK_BOX(main_hbox), right_vbox, TRUE, TRUE, 5);
-
-			GtkWidget* rs_cb = new_combobox("Device:", right_vbox);
-
-			std::vector<std::string> devList = getDevList();
-			int sel_idx = 0;
-			for (uint32_t idx = 0; idx < (uint32_t)devList.size(); idx++)
-			{
-				gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(rs_cb), devList.at(idx).c_str());
-				if (!selectedDevice.empty() && selectedDevice == devList.at(idx))
-				{
-					gtk_combo_box_set_active(GTK_COMBO_BOX(rs_cb), idx);
-					sel_idx = idx;
-				}
-			}
-
-			int sel_new = 0;
-			g_signal_connect(G_OBJECT(rs_cb), "changed", G_CALLBACK(deviceChanged), (gpointer)&sel_new);
-
-			gtk_widget_show_all(dlg);
-			gint result = gtk_dialog_run(GTK_DIALOG(dlg));
-
-			int ret = RESULT_OK;
-			if (result == GTK_RESPONSE_OK)
-			{
-				if (devList.size() && sel_new != sel_idx)
-				{
-					if (!SaveSetting(dev_type, port, APINAME, N_DEVICE, devList.at(sel_new)))
-					{
-						ret = RESULT_FAILED;
-					}
-				}
-			}
-			else
-			{
-				ret = RESULT_CANCELED;
-			}
-
-			gtk_widget_destroy(dlg);
-			return ret;
-		}
-
-		int V4L2::Configure(int port, const char* dev_type, void* data)
-		{
-			return GtkConfigure(port, dev_type, data);
-		};
-
 	} // namespace linux_api
+
+	std::unique_ptr<VideoDevice> VideoDevice::CreateInstance()
+	{
+		return std::make_unique<linux_api::V4L2>();
+	}
+
+	std::vector<std::pair<std::string, std::string>> VideoDevice::GetDeviceList()
+	{
+		return linux_api::getDevList();
+	}
 } // namespace usb_eyetoy

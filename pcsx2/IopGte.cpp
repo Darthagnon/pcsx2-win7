@@ -1,27 +1,11 @@
-/*  PCSX2 - PS2 Emulator for PCs
-*  Copyright (C) 2002-2010  PCSX2 Dev Team
-*
-*  PCSX2 is free software: you can redistribute it and/or modify it under the terms
-*  of the GNU Lesser General Public License as published by the Free Software Found-
-*  ation, either version 3 of the License, or (at your option) any later version.
-*
-*  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
-*  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-*  PURPOSE.  See the GNU General Public License for more details.
-*
-*  You should have received a copy of the GNU General Public License along with PCSX2.
-*  If not, see <http://www.gnu.org/licenses/>.
-*/
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
-#include "PrecompiledHeader.h"
-//#include <stdio.h>
-//#include <stdlib.h>
-//#include <math.h>
 #include "IopGte.h"
 #include "R3000A.h"
 #include "IopMem.h"
 
-#include "common/MathUtils.h"
+#include "common/BitUtils.h"
 #ifdef GTE_DUMP
 #define G_OP(name,delay) fprintf(gteLog, "* : %08X : %02d : %s\n", psxRegs.code, delay, name);
 #define G_SD(reg)  fprintf(gteLog, "+D%02d : %08X\n", reg, psxRegs.CP2D.r[reg]);
@@ -163,11 +147,11 @@ __inline unsigned long MFC2(int reg) {
 		gteORGB = (((gteIR1 >> 7) & 0x1f)) |
 			(((gteIR2 >> 7) & 0x1f) << 5) |
 			(((gteIR3 >> 7) & 0x1f) << 10);
-		//			gteORGB = (gteIR1      ) | 
-		//					  (gteIR2 <<  5) | 
+		//			gteORGB = (gteIR1      ) |
+		//					  (gteIR2 <<  5) |
 		//					  (gteIR3 << 10);
-		//			gteORGB = ((gteIR1 & 0xf80)>>7) | 
-		//					  ((gteIR2 & 0xf80)>>2) | 
+		//			gteORGB = ((gteIR1 & 0xf80)>>7) |
+		//					  ((gteIR2 & 0xf80)>>2) |
 		//					  ((gteIR3 & 0xf80)<<3);
 		return gteORGB;
 
@@ -208,7 +192,7 @@ __inline void MTC2(unsigned long value, int reg) {
 
 	case 30:
 		psxRegs.CP2D.r[30] = value;
-		psxRegs.CP2D.r[31] = count_leading_sign_bits(value);
+		psxRegs.CP2D.r[31] = Common::CountLeadingSignBits(value);
 		break;
 
 	default:
@@ -453,7 +437,7 @@ __inline double limG1(double x) {
 	if (x >       1023.0) { x = 1023.0; gteFLAG |= (1 << 14); }
 	else
 		if (x <      -1024.0) { x = -1024.0; gteFLAG |= (1 << 14); }
-	
+
 	return (x);
 }
 
@@ -494,10 +478,10 @@ __inline s32 FlimE(s32 x) { _LIMX(0, 65535, 12); }
 __inline s32 FlimG1(s64 x) {
 	if (x > 2147483647) { gteFLAG |= (1 << 16); }
 	else if (x < (s64)0xffffffff80000000) { gteFLAG |= (1 << 15); }
-	
+
 	if (x >       1023) { x = 1023; gteFLAG |= (1 << 14); }
-	else if (x <      -1024) { x = -1024; gteFLAG |= (1 << 14); } 
-	
+	else if (x <      -1024) { x = -1024; gteFLAG |= (1 << 14); }
+
 	return (x);
 }
 
@@ -508,8 +492,8 @@ __inline s32 FlimG2(s64 x) {
 
 	if (x >       1023) { x = 1023; gteFLAG |= (1 << 13); }
 	else
-		if (x < -1024) { x = -1024; gteFLAG |= (1 << 13); } 
-	
+		if (x < -1024) { x = -1024; gteFLAG |= (1 << 13); }
+
 	return (x);
 }
 
@@ -2475,7 +2459,7 @@ void gteDPCS() {
 }
 
 void gteDPCT() {
-	//	unsigned long C,R,G,B;	
+	//	unsigned long C,R,G,B;
 	//	double RR0,GG0,BB0;
 #ifdef GTE_DUMP
 	static int sample = 0; sample++;

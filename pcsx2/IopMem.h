@@ -1,21 +1,11 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2025 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 
 #pragma once
 
 #include "MemoryTypes.h"
+
+#include <string>
 
 extern uptr *psxMemWLUT;
 extern const uptr *psxMemRLUT;
@@ -71,10 +61,9 @@ static __fi u8* iopPhysMem( u32 addr )
 #define psxHu16(mem)	(*(u16*)&iopHw[(mem) & 0xffff])
 #define psxHu32(mem)	(*(u32*)&iopHw[(mem) & 0xffff])
 
-extern void psxMemReserve();
-extern void psxMemAlloc();
-extern void psxMemReset();
-extern void psxMemShutdown();
+extern void iopMemAlloc();
+extern void iopMemReset();
+extern void iopMemRelease();
 
 extern u8   iopMemRead8 (u32 mem);
 extern u16  iopMemRead16(u32 mem);
@@ -82,6 +71,11 @@ extern u32  iopMemRead32(u32 mem);
 extern void iopMemWrite8 (u32 mem, u8 value);
 extern void iopMemWrite16(u32 mem, u16 value);
 extern void iopMemWrite32(u32 mem, u32 value);
+
+// NOTE: Does not call MMIO handlers.
+extern int iopMemSafeCmpBytes(u32 mem, const void* src, u32 size);
+extern bool iopMemSafeReadBytes(u32 mem, void* dst, u32 size);
+extern bool iopMemSafeWriteBytes(u32 mem, const void* src, u32 size);
 
 std::string iopMemReadString(u32 mem, int maxlen = 65536);
 
